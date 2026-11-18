@@ -30,14 +30,18 @@
     <!-- Learn Mode Banner -->
     <section class="learn-banner" aria-live="polite">
       <span class="badge">LEARN MODE</span>
-      <p id="learn-text">Hover over any control or knob to see how it shapes the sound.</p>
+      <p id="learn-text">Hover over any control, module toggle, or knob to see how it shapes the sound.</p>
     </section>
 
-    <!-- Top Row: Synthesizer & Oscilloscope -->
-    <section class="grid-two">
-      <div class="panel">
-        <h2>🌊 Wave Synthesizer</h2>
-        <div class="synth-controls">
+    <!-- Top Section: Wave Synthesizer + Individual Synth Scope + Modular Effects Rack -->
+    <section class="panel synth-rack-panel">
+      <div class="synth-header-bar">
+        <div class="synth-title-group">
+          <h2>🌊 Wave Synthesizer &amp; Modular Effects Rack</h2>
+          <span class="scope-hint">Shapes the Synth &amp; Master Effects Bus</span>
+        </div>
+
+        <div class="synth-quick-controls">
           <label class="control-group" data-tip="Selects the basic shape of the sound wave. Sine is smooth; Sawtooth and Square are bright and buzzy.">
             <span>Waveform</span>
             <select id="wave-select">
@@ -48,25 +52,71 @@
             </select>
           </label>
 
-          <label class="control-group" data-tip="Low-pass filter cutoff: trims high frequencies to make the sound darker or brighter.">
-            <span>Filter Cutoff (<span id="cutoff-val">2000</span> Hz)</span>
-            <input type="range" id="cutoff-slider" min="100" max="8000" value="2000" />
+          <label class="control-group" data-tip="Selects the musical note pitch for the synthesizer test button.">
+            <span>Pitch</span>
+            <select id="note-select">
+              <option value="130.81">C3 (Low Bass)</option>
+              <option value="164.81">E3</option>
+              <option value="196.00">G3</option>
+              <option value="220.00" selected>A3 (Standard)</option>
+              <option value="261.63">C4 (Middle C)</option>
+              <option value="329.63">E4</option>
+              <option value="440.00">A4 (Bright)</option>
+            </select>
           </label>
 
-          <label class="control-group" data-tip="Release time: how long the note takes to fade out after being triggered.">
-            <span>Release (<span id="release-val">0.3</span> s)</span>
-            <input type="range" id="release-slider" min="0.05" max="1.5" step="0.05" value="0.3" />
-          </label>
-
-          <button id="test-synth-btn" class="btn btn-secondary" data-tip="Play a single test note using your current synth settings.">
-            🎹 Test Synth Note
+          <button id="test-synth-btn" class="btn btn-secondary" data-tip="Play a synthesizer note through the 4 modular effect units below.">
+            🎹 Play Synth Note
           </button>
+        </div>
+
+        <!-- Dedicated Synthesizer Live Oscilloscope -->
+        <div class="track-scope-box synth-scope-box" data-tip="Live Synth Oscilloscope: shows the synthesizer waveform before it enters the master bus.">
+          <span class="scope-label">SYNTH WAVE</span>
+          <canvas id="scope-synth" class="mini-oscilloscope" width="220" height="54"></canvas>
         </div>
       </div>
 
-      <div class="panel">
-        <h2>📈 Live Oscilloscope</h2>
-        <canvas id="oscilloscope" width="500" height="160"></canvas>
+      <!-- 4 Color-Coded Modular Knob Rack -->
+      <div class="modular-rack" id="modular-rack">
+        <!-- Module 1: ADSR Envelope (Blue) -->
+        <div class="rack-module module-blue" id="module-adsr">
+          <div class="module-header">
+            <span class="module-title">1. ADSR Envelope</span>
+            <button type="button" class="bypass-btn active" data-module="adsr" data-tip="Bypass ADSR Envelope: turn OFF to hear an instant organ-style envelope.">ON</button>
+          </div>
+          <div class="module-knobs" id="knobs-adsr"></div>
+        </div>
+
+        <!-- Module 2: Filter & Modulation (Purple) -->
+        <div class="rack-module module-purple" id="module-filter">
+          <div class="module-header">
+            <span class="module-title">2. Filter &amp; Mod</span>
+            <div class="module-header-actions">
+              <button type="button" id="filter-mode-btn" class="mode-toggle-btn" data-tip="Switch Filter Mode between Low-Pass (cuts highs) and High-Pass (cuts lows).">LP</button>
+              <button type="button" class="bypass-btn active" data-module="filter" data-tip="Bypass Filter & Modulation: turn OFF to hear the raw unfiltered wave.">ON</button>
+            </div>
+          </div>
+          <div class="module-knobs" id="knobs-filter"></div>
+        </div>
+
+        <!-- Module 3: Dynamics & Grit (Amber/Orange) -->
+        <div class="rack-module module-amber" id="module-dynamics">
+          <div class="module-header">
+            <span class="module-title">3. Dynamics &amp; Grit</span>
+            <button type="button" class="bypass-btn active" data-module="dynamics" data-tip="Bypass Drive, Compression, and Noise Gate to A/B test clean vs. gritty tone.">ON</button>
+          </div>
+          <div class="module-knobs" id="knobs-dynamics"></div>
+        </div>
+
+        <!-- Module 4: Space & Time (Teal/Green) -->
+        <div class="rack-module module-teal" id="module-space">
+          <div class="module-header">
+            <span class="module-title">4. Space &amp; Time</span>
+            <button type="button" class="bypass-btn active" data-module="space" data-tip="Bypass Echo and Reverb to hear the dry sound without room space.">ON</button>
+          </div>
+          <div class="module-knobs" id="knobs-space"></div>
+        </div>
       </div>
     </section>
 
@@ -110,7 +160,7 @@
         </div>
       </div>
 
-      <p id="sample-status" class="status-note">Click any drum name on the left to edit its EQ &amp; Attack knobs, or drag any knob up/down to adjust.</p>
+      <p id="sample-status" class="status-note">Each track has its own live oscilloscope on the left. Click any drum name to edit its EQ &amp; Attack knobs.</p>
       <div id="sequencer-grid" class="sequencer-grid"></div>
     </section>
   </main>

@@ -1,19 +1,48 @@
 // 2_script/script.js
-// PROCESSING & PRESENTATION: Web Audio API engine, rotary knobs, drum EQ/attack, and sequencer.
+// PROCESSING & PRESENTATION: Web Audio API modular effects rack, rotary knobs, and per-track oscilloscopes.
 
 let audioCtx = null;
-let analyser = null;
 let noiseBuffer = null;
+let reverbImpulseBuffer = null;
 let isPlaying = false;
 let currentStep = 0;
 let stepTimeoutId = null;
 
+// Dedicated per-channel AnalyserNodes & Canvas registry
+const channelAnalysers = {}; // { synth: { analyser, canvas, ctx, color, dataArray }, kick: ..., ... }
+let scopeLoopStarted = false;
+
+// Master & FX Audio Nodes
+let masterBusGain = null;
+let fxInputBus = null;
+let driveNode = null;
+let compressorNode = null;
+let gateGainNode = null;
+let delayNode = null;
+let delayFeedbackGain = null;
+let delayWetGain = null;
+let reverbConvolver = null;
+let reverbWetGain = null;
+let dryBusGain = null;
+
 // Sequencer & Drum Settings State
-let stepCount = 16; // 8, 16, or 32
-let swingPercent = 0; // 0 to 60
+let stepCount = 16;
+let swingPercent = 0;
 let selectedTrackId = "kick";
 let gridState = {};
 let drumSettings = {};
+
+// Modular Rack Parameter State & Bypass Flags
+const rackState = {
+  filterType: "lowpass", // "lowpass" or "highpass"
+  bypass: {
+    adsr: false,
+    filter: false,
+    dynamics: false,
+    space: false
+  },
+  params: {}
+};
 
 // DOM references
 const playBtn = document.getElementById("play-btn");
@@ -23,31 +52,102 @@ const stepsSelect = document.getElementById("steps-select");
 const swingSlider = document.getElementById("swing-slider");
 const swingVal = document.getElementById("swing-val");
 const waveSelect = document.getElementById("wave-select");
-const cutoffSlider = document.getElementById("cutoff-slider");
-const cutoffVal = document.getElementById("cutoff-val");
-const releaseSlider = document.getElementById("release-slider");
-const releaseVal = document.getElementById("release-val");
+const noteSelect = document.getElementById("note-select");
 const testSynthBtn = document.getElementById("test-synth-btn");
 const previewDrumBtn = document.getElementById("preview-drum-btn");
 const clearBtn = document.getElementById("clear-btn");
+const filterModeBtn = document.getElementById("filter-mode-btn");
 const sequencerGrid = document.getElementById("sequencer-grid");
 const drumKnobsContainer = document.getElementById("drum-knobs-container");
 const editorTrackBadge = document.getElementById("editor-track-badge");
 const editorTrackTitle = document.getElementById("editor-track-title");
 const learnText = document.getElementById("learn-text");
-const canvas = document.getElementById("oscilloscope");
-const canvasCtx = canvas.getContext("2d");
 
-// Initialize Web Audio API and reusable white-noise buffer for snares/hats/claps
+// Populate default rack parameter values from data.js
+function initRackDefaults() {
+  Object.values(WAVECRAFT_DATA.rackModules).forEach((mod) => {
+    mod.knobs.forEach((k) => {
+      rackState.params[k.id] = k.defaultValue;
+    });
+  });
+}
+
+// Build distortion curve for WaveShaperNode
+function makeDistortionCurve(amount) {
+  const k = amount * 2.5;
+  const samples = 44100;
+  const curve = new Float32Array(samples);
+  if (k <= 0.01) {
+    for (let i = 0; i < samples; i++) {
+      curve[i] = (i * 2) / samples - 1;
+    }
+    return curve;
+  }
+  const deg = Math.PI / 180;
+  for (let i = 0; i < samples; i++) {
+    const x = (i * 2) / samples - 1;
+    curve[i] = ((3 + k) * x * 20 * deg) / (Math.PI + k * Math.abs(x));
+  }
+  return curve;
+}
+
+// Generate synthetic room impulse response for ConvolverNode Reverb
+function createReverbImpulse(ctx, duration = 1.6, decay = 2.4) {
+  const length = ctx.sampleRate * duration;
+  const impulse = ctx.createBuffer(2, length, ctx.sampleRate);
+  for (let ch = 0; ch < 2; ch++) {
+    const channelData = impulse.getChannelData(ch);
+    for (let i = 0; i < length; i++) {
+      channelData[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, decay);
+    }
+  }
+  return impulse;
+}
+
+// Register a dedicated AnalyserNode for an individual instrument channel
+function ensureChannelAnalyser(channelId, color) {
+  if (!audioCtx) return null;
+  if (!channelAnalysers[channelId]) {
+    const analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 512;
+    analyser.smoothingTimeConstant = 0.8;
+    channelAnalysers[channelId] = {
+      analyser,
+      color,
+      dataArray: new Uint8Array(analyser.frequencyBinCount),
+      canvas: null,
+      ctx: null
+    };
+  }
+  return channelAnalysers[channelId].analyser;
+}
+
+// Attach a DOM <canvas> element to an existing channel analyser
+function bindCanvasToChannel(channelId, canvasEl, color) {
+  if (!canvasEl) return;
+  if (audioCtx) ensureChannelAnalyser(channelId, color);
+  if (!channelAnalysers[channelId]) {
+    channelAnalysers[channelId] = {
+      analyser: null,
+      color,
+      dataArray: null,
+      canvas: canvasEl,
+      ctx: canvasEl.getContext("2d")
+    };
+  } else {
+    channelAnalysers[channelId].canvas = canvasEl;
+    channelAnalysers[channelId].ctx = canvasEl.getContext("2d");
+    channelAnalysers[channelId].color = color;
+  }
+}
+
+// Initialize Web Audio API, per-track analysers, and the Master Effects Bus
 function initAudio() {
   if (!audioCtx) {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     audioCtx = new AudioContextClass();
-    analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 1024;
-    analyser.connect(audioCtx.destination);
 
-    // Create 1-second noise buffer for percussion crispness
+    // Reusable 1-second noise buffer
     const bufferSize = audioCtx.sampleRate;
     noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
     const data = noiseBuffer.getChannelData(0);
@@ -55,10 +155,115 @@ function initAudio() {
       data[i] = Math.random() * 2 - 1;
     }
 
-    drawOscilloscope();
+    reverbImpulseBuffer = createReverbImpulse(audioCtx);
+
+    // Build Master Effects Bus (Dynamics & Grit + Space & Time)
+    fxInputBus = audioCtx.createGain();
+    masterBusGain = audioCtx.createGain();
+    masterBusGain.gain.value = 0.9;
+
+    // Dynamics & Grit nodes
+    driveNode = audioCtx.createWaveShaper();
+    driveNode.oversample = "2x";
+
+    compressorNode = audioCtx.createDynamicsCompressor();
+    gateGainNode = audioCtx.createGain();
+    gateGainNode.gain.value = 1;
+
+    // Space & Time nodes (Echo & Reverb)
+    dryBusGain = audioCtx.createGain();
+    delayNode = audioCtx.createDelay(1.0);
+    delayNode.delayTime.value = 0.28;
+    delayFeedbackGain = audioCtx.createGain();
+    delayWetGain = audioCtx.createGain();
+
+    reverbConvolver = audioCtx.createConvolver();
+    reverbConvolver.buffer = reverbImpulseBuffer;
+    reverbWetGain = audioCtx.createGain();
+
+    // Wire Master FX Graph:
+    // fxInputBus -> driveNode -> compressorNode -> gateGainNode -> (Dry + Delay + Reverb) -> masterBusGain -> destination
+    fxInputBus.connect(driveNode);
+    driveNode.connect(compressorNode);
+    compressorNode.connect(gateGainNode);
+
+    gateGainNode.connect(dryBusGain);
+    dryBusGain.connect(masterBusGain);
+
+    gateGainNode.connect(delayNode);
+    delayNode.connect(delayFeedbackGain);
+    delayFeedbackGain.connect(delayNode);
+    delayNode.connect(delayWetGain);
+    delayWetGain.connect(masterBusGain);
+
+    gateGainNode.connect(reverbConvolver);
+    reverbConvolver.connect(reverbWetGain);
+    reverbWetGain.connect(masterBusGain);
+
+    masterBusGain.connect(audioCtx.destination);
+
+    // Create dedicated channel analysers for synth and every drum track
+    ensureChannelAnalyser("synth", "#38bdf8");
+    const synthCanvas = document.getElementById("scope-synth");
+    if (synthCanvas) bindCanvasToChannel("synth", synthCanvas, "#38bdf8");
+    channelAnalysers.synth.analyser.connect(fxInputBus);
+
+    WAVECRAFT_DATA.tracks.forEach((t) => {
+      const an = ensureChannelAnalyser(t.id, t.color);
+      an.connect(fxInputBus);
+    });
+
+    // Re-bind any already-rendered drum canvases
+    document.querySelectorAll("[data-scope-track]").forEach((canvasEl) => {
+      const tid = canvasEl.dataset.scopeTrack;
+      const trackObj = WAVECRAFT_DATA.tracks.find((tr) => tr.id === tid);
+      if (trackObj) bindCanvasToChannel(tid, canvasEl, trackObj.color);
+    });
+
+    updateMasterFxParams();
   }
+
   if (audioCtx.state === "suspended") {
     audioCtx.resume();
+  }
+
+  if (!scopeLoopStarted) {
+    scopeLoopStarted = true;
+    renderAllOscilloscopes();
+  }
+}
+
+// Update Dynamics & Space audio nodes whenever knobs or bypass buttons change
+function updateMasterFxParams() {
+  if (!audioCtx) return;
+  const now = audioCtx.currentTime;
+
+  // Module 3: Dynamics & Grit
+  if (rackState.bypass.dynamics) {
+    driveNode.curve = makeDistortionCurve(0);
+    compressorNode.threshold.setValueAtTime(0, now);
+    compressorNode.ratio.setValueAtTime(1, now);
+    gateGainNode.gain.setTargetAtTime(1, now, 0.01);
+  } else {
+    driveNode.curve = makeDistortionCurve(rackState.params.drive);
+    const compPct = rackState.params.compression / 100;
+    compressorNode.threshold.setValueAtTime(-6 - compPct * 34, now); // -6 dB to -40 dB
+    compressorNode.ratio.setValueAtTime(1 + compPct * 11, now); // 1:1 to 12:1
+    compressorNode.attack.setValueAtTime(0.005, now);
+    compressorNode.release.setValueAtTime(0.15, now);
+  }
+
+  // Module 4: Space & Time
+  if (rackState.bypass.space) {
+    delayFeedbackGain.gain.setTargetAtTime(0, now, 0.01);
+    delayWetGain.gain.setTargetAtTime(0, now, 0.01);
+    reverbWetGain.gain.setTargetAtTime(0, now, 0.01);
+  } else {
+    const echoAmt = rackState.params.echo / 100;
+    const revAmt = rackState.params.reverb / 100;
+    delayFeedbackGain.gain.setTargetAtTime(echoAmt * 0.65, now, 0.01);
+    delayWetGain.gain.setTargetAtTime(echoAmt * 0.55, now, 0.01);
+    reverbWetGain.gain.setTargetAtTime(revAmt * 0.75, now, 0.01);
   }
 }
 
@@ -72,12 +277,13 @@ function initDrumSettings() {
   });
 }
 
-// Play a drum hit shaped by its preset, EQ filters (Low/Mid/High cut), Attack, and Volume
+// Play a drum hit routed through its own dedicated AnalyserNode before hitting the master bus
 function playDrumSound(trackId) {
   initAudio();
   const s = drumSettings[trackId];
   if (!s || s.volume <= 0.01) return;
 
+  const trackAnalyser = ensureChannelAnalyser(trackId, "#38bdf8");
   const now = audioCtx.currentTime;
   const attack = Math.max(0.001, s.attack);
   const totalTime = attack + s.decay;
@@ -91,20 +297,20 @@ function playDrumSound(trackId) {
   oscGain.gain.value = 1 - s.noiseMix * 0.5;
   osc.connect(oscGain);
 
-  // 2. Noise Generator (for snare snap, hats, claps)
+  // 2. Noise Generator
   const noise = audioCtx.createBufferSource();
   noise.buffer = noiseBuffer;
   const noiseGain = audioCtx.createGain();
   noiseGain.gain.value = s.noiseMix;
   noise.connect(noiseGain);
 
-  // 3. Amplitude Envelope (Attack -> Decay)
+  // 3. Amplitude Envelope
   const envGain = audioCtx.createGain();
   envGain.gain.setValueAtTime(0.0001, now);
   envGain.gain.linearRampToValueAtTime(s.volume, now + attack);
   envGain.gain.exponentialRampToValueAtTime(0.0001, now + totalTime);
 
-  // 4. 3-Band EQ Chain: Low-Cut (Highpass) -> Mid-Cut (Peaking) -> High-Cut (Lowpass)
+  // 4. 3-Band EQ Chain
   const lowCutFilter = audioCtx.createBiquadFilter();
   lowCutFilter.type = "highpass";
   lowCutFilter.frequency.setValueAtTime(s.lowCut, now);
@@ -113,19 +319,19 @@ function playDrumSound(trackId) {
   midCutFilter.type = "peaking";
   midCutFilter.frequency.setValueAtTime(1000, now);
   midCutFilter.Q.setValueAtTime(1.2, now);
-  midCutFilter.gain.setValueAtTime(s.midCut, now); // negative dB cuts boxy mids
+  midCutFilter.gain.setValueAtTime(s.midCut, now);
 
   const highCutFilter = audioCtx.createBiquadFilter();
   highCutFilter.type = "lowpass";
   highCutFilter.frequency.setValueAtTime(s.highCut, now);
 
-  // Connect Audio Graph
+  // Route into this drum track's individual AnalyserNode
   oscGain.connect(envGain);
   noiseGain.connect(envGain);
   envGain.connect(lowCutFilter);
   lowCutFilter.connect(midCutFilter);
   midCutFilter.connect(highCutFilter);
-  highCutFilter.connect(analyser);
+  highCutFilter.connect(trackAnalyser);
 
   osc.start(now);
   noise.start(now);
@@ -133,34 +339,83 @@ function playDrumSound(trackId) {
   noise.stop(now + totalTime + 0.02);
 }
 
-// Play a synth note using current UI controls
+// Play a synthesizer note shaped by ADSR Envelope, Filter & LFO Modulation, Dynamics, and Space
 function playSynthNote(freq = 220) {
   initAudio();
   const now = audioCtx.currentTime;
-  const release = parseFloat(releaseSlider.value);
+  const synthAnalyser = ensureChannelAnalyser("synth", "#38bdf8");
 
   const osc = audioCtx.createOscillator();
-  const filter = audioCtx.createBiquadFilter();
-  const gain = audioCtx.createGain();
-
   osc.type = waveSelect.value;
   osc.frequency.setValueAtTime(freq, now);
 
-  filter.type = "lowpass";
-  filter.frequency.setValueAtTime(parseFloat(cutoffSlider.value), now);
+  // Module 1: ADSR Envelope
+  const envGain = audioCtx.createGain();
+  let totalNoteDuration = 0.65;
 
-  gain.gain.setValueAtTime(0.3, now);
-  gain.gain.exponentialRampToValueAtTime(0.001, now + release);
+  if (rackState.bypass.adsr) {
+    envGain.gain.setValueAtTime(0.32, now);
+    envGain.gain.setValueAtTime(0.32, now + 0.5);
+    envGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.55);
+  } else {
+    const { attack, decay, sustain, release } = rackState.params;
+    const holdTime = 0.25;
+    const peakGain = 0.42;
+    const sustainGain = Math.max(0.001, peakGain * sustain);
+    totalNoteDuration = attack + decay + holdTime + release;
 
-  osc.connect(filter);
-  filter.connect(gain);
-  gain.connect(analyser);
+    envGain.gain.setValueAtTime(0.0001, now);
+    envGain.gain.linearRampToValueAtTime(peakGain, now + attack);
+    envGain.gain.exponentialRampToValueAtTime(sustainGain, now + attack + decay);
+    envGain.gain.setValueAtTime(sustainGain, now + attack + decay + holdTime);
+    envGain.gain.exponentialRampToValueAtTime(0.0001, now + totalNoteDuration);
+  }
+
+  // Module 2: Filter & LFO Modulation
+  let lastNode = osc;
+  let lfoOsc = null;
+
+  if (!rackState.bypass.filter) {
+    const filter = audioCtx.createBiquadFilter();
+    filter.type = rackState.filterType;
+    filter.frequency.setValueAtTime(rackState.params.cutoff, now);
+    filter.Q.setValueAtTime(rackState.params.resonance, now);
+
+    // LFO modulating Filter Cutoff
+    const modAmt = rackState.params.modDepth;
+    if (modAmt > 0) {
+      lfoOsc = audioCtx.createOscillator();
+      const lfoGain = audioCtx.createGain();
+      lfoOsc.type = "sine";
+      lfoOsc.frequency.setValueAtTime(1.5 + (modAmt / 100) * 8, now); // 1.5 Hz to 9.5 Hz
+      lfoGain.gain.setValueAtTime((modAmt / 100) * (rackState.params.cutoff * 0.65), now);
+      lfoOsc.connect(lfoGain);
+      lfoGain.connect(filter.frequency);
+      lfoOsc.start(now);
+      lfoOsc.stop(now + totalNoteDuration + 0.05);
+    }
+
+    lastNode.connect(filter);
+    lastNode = filter;
+  }
+
+  // Module 3: Noise Gate threshold tail trim on synth voice
+  if (!rackState.bypass.dynamics) {
+    const gateDb = rackState.params.gate;
+    if (gateDb > -65) {
+      const gateFactor = Math.max(0.15, 1 - (gateDb + 65) / 65);
+      totalNoteDuration *= gateFactor;
+    }
+  }
+
+  lastNode.connect(envGain);
+  envGain.connect(synthAnalyser);
 
   osc.start(now);
-  osc.stop(now + release + 0.02);
+  osc.stop(now + totalNoteDuration + 0.05);
 }
 
-// Reusable Rotary Knob Builder (supports mouse/touch drag and scroll wheel)
+// Reusable Rotary Knob Builder (supports mouse/touch drag up/down and scroll wheel)
 function createKnob({ label, min, max, step, value, unit, tip, accentColor, onChange }) {
   const wrapper = document.createElement("div");
   wrapper.className = "knob-unit";
@@ -171,6 +426,10 @@ function createKnob({ label, min, max, step, value, unit, tip, accentColor, onCh
     });
   }
 
+  const labelEl = document.createElement("span");
+  labelEl.className = "knob-label";
+  labelEl.textContent = label;
+
   const dial = document.createElement("div");
   dial.className = "knob-dial";
   if (accentColor) dial.style.borderColor = accentColor;
@@ -180,26 +439,26 @@ function createKnob({ label, min, max, step, value, unit, tip, accentColor, onCh
   if (accentColor) indicator.style.backgroundColor = accentColor;
   dial.appendChild(indicator);
 
-  const labelEl = document.createElement("span");
-  labelEl.className = "knob-label";
-  labelEl.textContent = label;
-
   const valueEl = document.createElement("span");
   valueEl.className = "knob-value";
 
   let currentVal = value;
 
   function formatDisplay(val) {
-    if (unit === "%") return `${Math.round(val * 100)}%`;
+    if (unit === "%") {
+      const pct = max <= 1 ? Math.round(val * 100) : Math.round(val);
+      return `${pct}%`;
+    }
     if (unit === "ms") return `${Math.round(val * 1000)} ms`;
-    if (unit === "Hz") return val >= 1000 ? `${(val / 1000).toFixed(1)}k` : `${Math.round(val)} Hz`;
+    if (unit === "Hz") return val >= 1000 ? `${(val / 1000).toFixed(1)} kHz` : `${Math.round(val)} Hz`;
     if (unit === "dB") return `${val > 0 ? "+" : ""}${Math.round(val)} dB`;
+    if (unit === "Q") return `${val.toFixed(1)} Q`;
     return `${val}${unit || ""}`;
   }
 
   function updateVisual(val) {
     const ratio = (val - min) / (max - min);
-    const angle = -135 + ratio * 270; // -135 deg to +135 deg
+    const angle = -135 + ratio * 270;
     indicator.style.transform = `translateX(-50%) rotate(${angle}deg)`;
     valueEl.textContent = formatDisplay(val);
   }
@@ -214,7 +473,6 @@ function createKnob({ label, min, max, step, value, unit, tip, accentColor, onCh
 
   updateVisual(currentVal);
 
-  // Drag up/down support (mouse & touch)
   let startY = 0;
   let startVal = 0;
 
@@ -247,17 +505,80 @@ function createKnob({ label, min, max, step, value, unit, tip, accentColor, onCh
     window.addEventListener("touchend", onPointerUp);
   }, { passive: true });
 
-  // Scroll wheel support
   dial.addEventListener("wheel", (e) => {
     e.preventDefault();
     const dir = e.deltaY < 0 ? 1 : -1;
     setValue(currentVal + dir * step * 2);
   });
 
-  wrapper.appendChild(dial);
+  // Label above knob, dial in middle, live numeric value below
   if (label) wrapper.appendChild(labelEl);
+  wrapper.appendChild(dial);
   wrapper.appendChild(valueEl);
   return wrapper;
+}
+
+// Render the 4 Color-Coded Modular Knob Rack Cards
+function renderModularRack() {
+  Object.entries(WAVECRAFT_DATA.rackModules).forEach(([modKey, modData]) => {
+    const container = document.getElementById(`knobs-${modKey}`);
+    if (!container) return;
+    container.innerHTML = "";
+
+    modData.knobs.forEach((k) => {
+      const knobEl = createKnob({
+        label: k.label,
+        min: k.min,
+        max: k.max,
+        step: k.step,
+        value: rackState.params[k.id],
+        unit: k.unit,
+        tip: k.tip,
+        accentColor: modData.accent,
+        onChange: (val) => {
+          rackState.params[k.id] = val;
+          updateMasterFxParams();
+        }
+      });
+      container.appendChild(knobEl);
+    });
+  });
+
+  // Setup Bypass buttons on each module card
+  document.querySelectorAll(".bypass-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const modKey = btn.dataset.module;
+      const isBypassed = !rackState.bypass[modKey];
+      rackState.bypass[modKey] = isBypassed;
+
+      const card = document.getElementById(`module-${modKey}`);
+      if (isBypassed) {
+        btn.textContent = "OFF";
+        btn.classList.remove("active");
+        if (card) card.classList.add("bypassed");
+      } else {
+        btn.textContent = "ON";
+        btn.classList.add("active");
+        if (card) card.classList.remove("bypassed");
+      }
+      updateMasterFxParams();
+    });
+  });
+
+  // Setup Low-Pass / High-Pass filter mode toggle
+  if (filterModeBtn) {
+    filterModeBtn.addEventListener("click", () => {
+      if (rackState.filterType === "lowpass") {
+        rackState.filterType = "highpass";
+        filterModeBtn.textContent = "HP";
+        filterModeBtn.title = "High-Pass Filter Mode";
+      } else {
+        rackState.filterType = "lowpass";
+        filterModeBtn.textContent = "LP";
+        filterModeBtn.title = "Low-Pass Filter Mode";
+      }
+    });
+  }
 }
 
 // Render the Drum Sound Editor knobs for the currently selected instrument
@@ -320,7 +641,7 @@ function renderDrumEditor() {
   });
 }
 
-// Build the sequencer rows (Track Select + Preset Dropdown + Volume Knob + Steps)
+// Build the sequencer rows (Track Select + Preset Dropdown + Volume Knob + Individual Live Oscilloscope + Steps)
 function renderGrid() {
   sequencerGrid.innerHTML = "";
 
@@ -329,7 +650,7 @@ function renderGrid() {
     row.className = "track-row";
     if (track.id === selectedTrackId) row.classList.add("selected-track");
 
-    // Left track info & controls column
+    // Left track info, controls, and individual live oscilloscope
     const meta = document.createElement("div");
     meta.className = "track-meta";
 
@@ -345,7 +666,6 @@ function renderGrid() {
       renderGrid();
     });
 
-    // Two-preset selector per instrument
     const presetDropdown = document.createElement("select");
     presetDropdown.className = "track-preset-select";
     presetDropdown.dataset.tip = `Switch between two built-in sound presets for ${track.name}.`;
@@ -373,7 +693,6 @@ function renderGrid() {
       playDrumSound(track.id);
     });
 
-    // Per-instrument Volume Knob on the drum rack
     const volKnob = createKnob({
       label: "",
       min: 0,
@@ -389,9 +708,21 @@ function renderGrid() {
     });
     volKnob.classList.add("mini-knob");
 
+    // Dedicated Individual Oscilloscope Canvas per drum track
+    const scopeCanvas = document.createElement("canvas");
+    scopeCanvas.className = "track-mini-scope";
+    scopeCanvas.width = 96;
+    scopeCanvas.height = 38;
+    scopeCanvas.dataset.scopeTrack = track.id;
+    scopeCanvas.dataset.tip = `${track.name} Live Oscilloscope: visualizes this individual track's waveform in real time.`;
+    scopeCanvas.addEventListener("mouseenter", () => { learnText.textContent = scopeCanvas.dataset.tip; });
+
+    bindCanvasToChannel(track.id, scopeCanvas, track.color);
+
     meta.appendChild(selectBtn);
     meta.appendChild(presetDropdown);
     meta.appendChild(volKnob);
+    meta.appendChild(scopeCanvas);
     row.appendChild(meta);
 
     // Step buttons (8, 16, or 32 depending on quantization)
@@ -423,6 +754,65 @@ function renderGrid() {
     row.appendChild(stepsContainer);
     sequencerGrid.appendChild(row);
   });
+
+  // Draw initial flat centerlines on canvases before audio starts
+  drawIdleScopes();
+}
+
+// Draw clean center reference lines when audio context hasn't started yet
+function drawIdleScopes() {
+  Object.values(channelAnalysers).forEach((ch) => {
+    if (!ch.ctx || !ch.canvas) return;
+    const { ctx, canvas, color } = ch;
+    ctx.fillStyle = "#090f1d";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = color || "#38bdf8";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(0, canvas.height / 2);
+    ctx.lineTo(canvas.width, canvas.height / 2);
+    ctx.stroke();
+  });
+}
+
+// Optimized single 60fps requestAnimationFrame loop for all individual channel oscilloscopes
+function renderAllOscilloscopes() {
+  requestAnimationFrame(renderAllOscilloscopes);
+
+  const channels = Object.values(channelAnalysers);
+  for (let c = 0; c < channels.length; c++) {
+    const ch = channels[c];
+    if (!ch.analyser || !ch.ctx || !ch.canvas) continue;
+
+    const { analyser, ctx, canvas, color, dataArray } = ch;
+    const width = canvas.width;
+    const height = canvas.height;
+    const halfHeight = height * 0.5;
+
+    analyser.getByteTimeDomainData(dataArray);
+
+    ctx.fillStyle = "#090f1d";
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.lineWidth = 1.75;
+    ctx.strokeStyle = color || "#38bdf8";
+    ctx.beginPath();
+
+    const bufferLength = dataArray.length;
+    const sliceWidth = width / bufferLength;
+    let x = 0;
+
+    for (let i = 0; i < bufferLength; i++) {
+      const v = dataArray[i] / 128.0;
+      const y = v * halfHeight;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+      x += sliceWidth;
+    }
+
+    ctx.lineTo(width, halfHeight);
+    ctx.stroke();
+  }
 }
 
 // Schedule next step with dynamic BPM, Quantize Step Resolution, and Swing %
@@ -440,11 +830,9 @@ function scheduleNextTick() {
     }
   });
 
-  // Calculate base step duration in ms (4 beats per bar)
   const barMs = (60 / Number(bpmInput.value)) * 4 * 1000;
   const baseStepMs = barMs / stepCount;
 
-  // Apply swing: even steps are slightly longer, odd steps are slightly shorter
   const swingFactor = (swingPercent / 100) * 0.5;
   const isEvenStep = currentStep % 2 === 0;
   const delayMs = isEvenStep
@@ -478,44 +866,13 @@ function loadPreset(presetKey) {
 
   bpmInput.value = preset.bpm;
   waveSelect.value = preset.waveform;
-  cutoffSlider.value = preset.cutoff;
-  cutoffVal.textContent = preset.cutoff;
-  releaseSlider.value = preset.release;
-  releaseVal.textContent = preset.release;
+  rackState.params.cutoff = preset.cutoff;
+  rackState.params.release = preset.release;
+  renderModularRack();
+  updateMasterFxParams();
 
   gridState = JSON.parse(JSON.stringify(preset.pattern));
   renderGrid();
-}
-
-// Draw real-time audio wave on the canvas
-function drawOscilloscope() {
-  requestAnimationFrame(drawOscilloscope);
-  if (!analyser) return;
-
-  const bufferLength = analyser.frequencyBinCount;
-  const dataArray = new Uint8Array(bufferLength);
-  analyser.getByteTimeDomainData(dataArray);
-
-  canvasCtx.fillStyle = "#0f172a";
-  canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
-
-  canvasCtx.lineWidth = 2;
-  canvasCtx.strokeStyle = "#38bdf8";
-  canvasCtx.beginPath();
-
-  const sliceWidth = canvas.width / bufferLength;
-  let x = 0;
-
-  for (let i = 0; i < bufferLength; i++) {
-    const v = dataArray[i] / 128.0;
-    const y = (v * canvas.height) / 2;
-    if (i === 0) canvasCtx.moveTo(x, y);
-    else canvasCtx.lineTo(x, y);
-    x += sliceWidth;
-  }
-
-  canvasCtx.lineTo(canvas.width, canvas.height / 2);
-  canvasCtx.stroke();
 }
 
 // Setup Learn Mode hover tooltips
@@ -529,7 +886,12 @@ function setupTooltips() {
 
 // Initialize the app when page loads
 function startApp() {
+  initRackDefaults();
   initDrumSettings();
+
+  // Bind top synth canvas before audio starts so idle line draws cleanly
+  const synthCanvas = document.getElementById("scope-synth");
+  if (synthCanvas) bindCanvasToChannel("synth", synthCanvas, "#38bdf8");
 
   Object.entries(WAVECRAFT_DATA.presets).forEach(([key, preset]) => {
     const opt = document.createElement("option");
@@ -539,7 +901,10 @@ function startApp() {
   });
 
   playBtn.addEventListener("click", togglePlay);
-  testSynthBtn.addEventListener("click", () => playSynthNote(220));
+  testSynthBtn.addEventListener("click", () => {
+    const noteFreq = parseFloat(noteSelect.value) || 220;
+    playSynthNote(noteFreq);
+  });
   previewDrumBtn.addEventListener("click", () => playDrumSound(selectedTrackId));
   presetSelect.addEventListener("change", (e) => loadPreset(e.target.value));
 
@@ -554,14 +919,6 @@ function startApp() {
     swingVal.textContent = swingPercent;
   });
 
-  cutoffSlider.addEventListener("input", () => {
-    cutoffVal.textContent = cutoffSlider.value;
-  });
-
-  releaseSlider.addEventListener("input", () => {
-    releaseVal.textContent = releaseSlider.value;
-  });
-
   clearBtn.addEventListener("click", () => {
     WAVECRAFT_DATA.tracks.forEach((t) => {
       gridState[t.id] = Array(32).fill(0);
@@ -570,6 +927,7 @@ function startApp() {
   });
 
   setupTooltips();
+  renderModularRack();
   renderDrumEditor();
   loadPreset("basicRock");
 }

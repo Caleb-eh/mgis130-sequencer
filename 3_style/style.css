@@ -1,13 +1,18 @@
 /* 3_style/style.css */
-/* PRESENTATION STYLING: Responsive dark-mode studio layout with rotary knobs. */
+/* PRESENTATION STYLING: High-contrast modular card aesthetic, color-coded knob rack, and per-track oscilloscopes. */
 
 :root {
   --bg-dark: #0b1120;
   --panel-bg: #1e293b;
+  --card-bg: #0f172a;
   --border: #334155;
   --text-main: #f8fafc;
   --text-muted: #94a3b8;
   --accent: #38bdf8;
+  --mod-blue: #38bdf8;
+  --mod-purple: #a855f7;
+  --mod-amber: #f59e0b;
+  --mod-teal: #10b981;
 }
 
 * {
@@ -21,7 +26,7 @@ body {
   background-color: var(--bg-dark);
   color: var(--text-main);
   line-height: 1.5;
-  padding-bottom: 2rem;
+  padding-bottom: 2.5rem;
 }
 
 .top-bar {
@@ -45,7 +50,8 @@ body {
 }
 
 .transport-controls,
-.quantize-controls {
+.quantize-controls,
+.synth-quick-controls {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -94,6 +100,10 @@ select {
   color: var(--text-main);
 }
 
+.btn-secondary:hover {
+  background: #475569;
+}
+
 .btn-ghost {
   background: transparent;
   border: 1px solid var(--border);
@@ -101,7 +111,7 @@ select {
 }
 
 .workspace {
-  max-width: 1150px;
+  max-width: 1200px;
   margin: 1.5rem auto;
   padding: 0 1rem;
   display: flex;
@@ -129,12 +139,6 @@ select {
   border-radius: 4px;
 }
 
-.grid-two {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 1.25rem;
-}
-
 .panel {
   background: var(--panel-bg);
   border: 1px solid var(--border);
@@ -144,7 +148,6 @@ select {
 
 .panel h2 {
   font-size: 1.1rem;
-  margin-bottom: 0.75rem;
 }
 
 .panel-header {
@@ -156,18 +159,215 @@ select {
   margin-bottom: 1rem;
 }
 
-.synth-controls {
+/* Synthesizer Header & Dedicated Synth Oscilloscope */
+.synth-header-bar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.15rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.synth-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.scope-hint {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.track-scope-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  background: #090f1d;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.3rem 0.5rem;
+}
+
+.scope-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+}
+
+.mini-oscilloscope {
+  display: block;
+  width: 220px;
+  height: 54px;
+  border-radius: 4px;
+  background: #090f1d;
+}
+
+/* 4 Color-Coded Modular Knob Rack */
+.modular-rack {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1rem;
+}
+
+.rack-module {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-top: 4px solid var(--accent);
+  border-radius: 8px;
+  padding: 0.85rem;
   display: flex;
   flex-direction: column;
   gap: 0.85rem;
+  transition: opacity 0.2s ease, filter 0.2s ease;
 }
 
-canvas {
-  width: 100%;
-  height: 160px;
-  background: #0f172a;
-  border-radius: 6px;
+.rack-module.bypassed {
+  opacity: 0.48;
+  filter: grayscale(0.65);
+}
+
+.module-blue {
+  border-top-color: var(--mod-blue);
+}
+
+.module-purple {
+  border-top-color: var(--mod-purple);
+}
+
+.module-amber {
+  border-top-color: var(--mod-amber);
+}
+
+.module-teal {
+  border-top-color: var(--mod-teal);
+}
+
+.module-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.module-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text-main);
+}
+
+.module-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.bypass-btn,
+.mode-toggle-btn {
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
   border: 1px solid var(--border);
+  background: #1e293b;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.bypass-btn.active {
+  background: #22c55e;
+  color: #052e16;
+  border-color: #22c55e;
+}
+
+.mode-toggle-btn {
+  background: rgba(168, 85, 247, 0.2);
+  border-color: var(--mod-purple);
+  color: #e9d5ff;
+}
+
+.module-knobs {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-around;
+  gap: 0.75rem;
+}
+
+/* Rotary Knobs */
+.knob-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  align-items: center;
+}
+
+.knob-unit {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  user-select: none;
+  min-width: 54px;
+}
+
+.knob-dial {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, #334155, #0f172a);
+  border: 2px solid var(--accent);
+  position: relative;
+  cursor: ns-resize;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.55);
+}
+
+.knob-indicator {
+  width: 3px;
+  height: 15px;
+  background: var(--accent);
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  transform-origin: 50% 16px;
+  border-radius: 2px;
+}
+
+.knob-label {
+  font-size: 0.73rem;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.knob-value {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Mini Volume Knob inside Sequencer Row */
+.mini-knob {
+  min-width: 34px;
+}
+
+.mini-knob .knob-dial {
+  width: 28px;
+  height: 28px;
+}
+
+.mini-knob .knob-indicator {
+  width: 2px;
+  height: 9px;
+  top: 3px;
+  transform-origin: 50% 9px;
+}
+
+.mini-knob .knob-value {
+  font-size: 0.65rem;
 }
 
 /* Drum Sound Editor Drawer */
@@ -187,78 +387,13 @@ canvas {
   gap: 0.5rem;
 }
 
-.knob-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1.5rem;
-  align-items: center;
-}
-
-.knob-unit {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.25rem;
-  user-select: none;
-}
-
-.knob-dial {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  background: radial-gradient(circle at 30% 30%, #334155, #0f172a);
-  border: 2px solid var(--accent);
-  position: relative;
-  cursor: ns-resize;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
-}
-
-.knob-indicator {
-  width: 3px;
-  height: 15px;
-  background: var(--accent);
-  position: absolute;
-  top: 4px;
-  left: 50%;
-  transform-origin: 50% 16px;
-  border-radius: 2px;
-}
-
-.knob-label {
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--text-main);
-}
-
-.knob-value {
-  font-size: 0.7rem;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-}
-
-/* Mini Volume Knob inside Sequencer Row */
-.mini-knob .knob-dial {
-  width: 28px;
-  height: 28px;
-}
-
-.mini-knob .knob-indicator {
-  width: 2px;
-  height: 9px;
-  top: 3px;
-  transform-origin: 50% 9px;
-}
-
-.mini-knob .knob-value {
-  font-size: 0.65rem;
-}
-
 .status-note {
   font-size: 0.8rem;
   color: var(--text-muted);
   margin-bottom: 0.85rem;
 }
 
+/* Sequencer Grid & Per-Track Mini Oscilloscopes */
 .sequencer-grid {
   display: flex;
   flex-direction: column;
@@ -271,7 +406,7 @@ canvas {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  min-width: 720px;
+  min-width: 840px;
   padding: 0.35rem;
   border-radius: 6px;
   border: 1px solid transparent;
@@ -286,7 +421,7 @@ canvas {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  width: 245px;
+  width: 345px;
   flex-shrink: 0;
 }
 
@@ -298,15 +433,24 @@ canvas {
   padding: 0.35rem 0.5rem;
   font-size: 0.8rem;
   font-weight: 600;
-  width: 88px;
+  width: 84px;
   text-align: left;
   cursor: pointer;
 }
 
 .track-preset-select {
-  width: 105px;
+  width: 102px;
   padding: 0.3rem 0.35rem;
   font-size: 0.75rem;
+}
+
+.track-mini-scope {
+  width: 96px;
+  height: 38px;
+  background: #090f1d;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  flex-shrink: 0;
 }
 
 .steps-container {
@@ -316,7 +460,7 @@ canvas {
 }
 
 .step-btn {
-  height: 36px;
+  height: 38px;
   background: #0f172a;
   border: 1px solid var(--border);
   border-radius: 4px;
