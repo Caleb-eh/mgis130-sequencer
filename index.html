@@ -14,13 +14,13 @@
     </div>
 
     <div class="transport-controls">
-      <button id="play-btn" class="btn btn-primary" data-tip="Start or stop the 16-step loop.">▶ Play</button>
+      <button id="play-btn" class="btn btn-primary" data-tip="Start or stop the drum loop.">▶ Play</button>
       <label class="control-group" data-tip="Beats Per Minute: controls how fast the loop plays.">
         <span>BPM</span>
         <input type="number" id="bpm-input" value="120" min="60" max="200" />
       </label>
       <label class="control-group" data-tip="Load a built-in drum pattern and synth sound.">
-        <span>Preset</span>
+        <span>Pattern Preset</span>
         <select id="preset-select"></select>
       </label>
     </div>
@@ -30,7 +30,7 @@
     <!-- Learn Mode Banner -->
     <section class="learn-banner" aria-live="polite">
       <span class="badge">LEARN MODE</span>
-      <p id="learn-text">Hover over any control to see how it shapes the sound.</p>
+      <p id="learn-text">Hover over any control or knob to see how it shapes the sound.</p>
     </section>
 
     <!-- Top Row: Synthesizer & Oscilloscope -->
@@ -70,13 +70,47 @@
       </div>
     </section>
 
-    <!-- Bottom Row: 16-Step Drum Sequencer -->
+    <!-- Bottom Row: Drum Sequencer & Drum Sound Editor -->
     <section class="panel">
       <div class="panel-header">
-        <h2>🥁 16-Step Drum Sequencer</h2>
-        <button id="clear-btn" class="btn btn-ghost" data-tip="Turn off all active steps in the grid.">Clear Grid</button>
+        <h2>🥁 Drum Sequencer &amp; Sound Rack</h2>
+        <div class="quantize-controls">
+          <label class="control-group" data-tip="Quantization Grid: switch between 8 steps (1/8 notes), 16 steps (1/16 notes), or 32 steps (1/32 notes).">
+            <span>Quantize</span>
+            <select id="steps-select">
+              <option value="8">8 Steps (1/8)</option>
+              <option value="16" selected>16 Steps (1/16)</option>
+              <option value="32">32 Steps (1/32)</option>
+            </select>
+          </label>
+
+          <label class="control-group" data-tip="Swing: delays every second step slightly to create a human, bouncy groove.">
+            <span>Swing (<span id="swing-val">0</span>%)</span>
+            <input type="range" id="swing-slider" min="0" max="60" step="5" value="0" />
+          </label>
+
+          <button id="clear-btn" class="btn btn-ghost" data-tip="Turn off all active steps in the grid.">Clear Grid</button>
+        </div>
       </div>
-      <p id="sample-status" class="status-note">Using built-in synth drum tones (ready for .wav samples in assets/samples/).</p>
+
+      <!-- Drum Sound Editor Strip -->
+      <div class="drum-editor" id="drum-editor">
+        <div class="drum-editor-header">
+          <div>
+            <span class="badge" id="editor-track-badge">KICK</span>
+            <strong id="editor-track-title">Kick Sound Editor</strong>
+          </div>
+          <button id="preview-drum-btn" class="btn btn-secondary btn-sm" data-tip="Hear the selected drum sound with your current EQ and attack settings.">
+            🔊 Preview Drum
+          </button>
+        </div>
+
+        <div class="knob-row" id="drum-knobs-container">
+          <!-- Rotary knobs rendered by script.js -->
+        </div>
+      </div>
+
+      <p id="sample-status" class="status-note">Click any drum name on the left to edit its EQ &amp; Attack knobs, or drag any knob up/down to adjust.</p>
       <div id="sequencer-grid" class="sequencer-grid"></div>
     </section>
   </main>
