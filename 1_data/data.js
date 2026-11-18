@@ -98,7 +98,7 @@ const WAVECRAFT_DATA = {
           step: 1,
           defaultValue: 10,
           unit: "%",
-          tip: "Drive (Saturation): adds warm analog crunch and harmonic harmonics by gently clipping the wave."
+          tip: "Drive (Saturation): adds warm analog crunch and harmonics by gently clipping the wave."
         },
         {
           id: "compression",
@@ -118,7 +118,7 @@ const WAVECRAFT_DATA = {
           step: 1,
           defaultValue: -70,
           unit: "dB",
-          tip: "Noise Gate: silences quiet background hiss or reverb tails once volume drops below this threshold."
+          tip: "Noise Gate: silences quiet background hiss or reverb tails once volume drops below this dB threshold."
         }
       ]
     },
@@ -289,14 +289,28 @@ const WAVECRAFT_DATA = {
     }
   ],
 
-  // 32-step patterns so 8, 16, and 32 step quantization all slice cleanly
+  // 32-step patterns + full modular rack parameter snapshots
   presets: {
     basicRock: {
       name: "Basic Four-on-the-Floor",
       bpm: 120,
+      swing: 0,
       waveform: "sawtooth",
-      cutoff: 2200,
-      release: 0.35,
+      filterType: "lowpass",
+      rackParams: {
+        attack: 0.02,
+        decay: 0.25,
+        sustain: 0.55,
+        release: 0.35,
+        cutoff: 2400,
+        resonance: 2.5,
+        modDepth: 12,
+        drive: 10,
+        compression: 25,
+        gate: -70,
+        echo: 18,
+        reverb: 22
+      },
       pattern: {
         kick:  [1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0],
         snare: [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0],
@@ -307,13 +321,54 @@ const WAVECRAFT_DATA = {
     chillHipHop: {
       name: "Chill Boom-Bap",
       bpm: 92,
+      swing: 25,
       waveform: "triangle",
-      cutoff: 1100,
-      release: 0.55,
+      filterType: "lowpass",
+      rackParams: {
+        attack: 0.04,
+        decay: 0.35,
+        sustain: 0.45,
+        release: 0.55,
+        cutoff: 1150,
+        resonance: 3.8,
+        modDepth: 28,
+        drive: 24,
+        compression: 45,
+        gate: -62,
+        echo: 32,
+        reverb: 38
+      },
       pattern: {
         kick:  [1,0,0,1, 0,0,1,0, 0,0,1,0, 0,0,0,0, 1,0,0,1, 0,0,1,0, 0,0,1,0, 0,0,0,0],
         snare: [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,1, 0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,1],
         hihat: [1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1],
+        clap:  [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]
+      }
+    },
+    acidElectro: {
+      name: "Acid Electro Pulse",
+      bpm: 132,
+      swing: 10,
+      waveform: "square",
+      filterType: "lowpass",
+      rackParams: {
+        attack: 0.01,
+        decay: 0.18,
+        sustain: 0.3,
+        release: 0.22,
+        cutoff: 1650,
+        resonance: 10.5,
+        modDepth: 55,
+        drive: 42,
+        compression: 50,
+        gate: -55,
+        echo: 38,
+        reverb: 20
+      },
+      pattern: {
+        kick:  [1,0,0,0, 1,0,0,1, 0,0,1,0, 1,0,0,0, 1,0,0,0, 1,0,0,1, 0,0,1,0, 1,0,1,0],
+        snare: [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0],
+        hihat: [0,0,1,0, 0,0,1,0, 0,0,1,0, 0,0,1,1, 0,0,1,0, 0,0,1,0, 0,0,1,0, 0,1,1,1],
         clap:  [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]
       }
     }

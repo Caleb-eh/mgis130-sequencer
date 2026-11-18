@@ -14,12 +14,12 @@
     </div>
 
     <div class="transport-controls">
-      <button id="play-btn" class="btn btn-primary" data-tip="Start or stop the drum loop.">▶ Play</button>
+      <button id="play-btn" class="btn btn-primary" data-tip="Start or stop the drum loop (Shortcut: Spacebar).">▶ Play</button>
       <label class="control-group" data-tip="Beats Per Minute: controls how fast the loop plays.">
         <span>BPM</span>
         <input type="number" id="bpm-input" value="120" min="60" max="200" />
       </label>
-      <label class="control-group" data-tip="Load a built-in drum pattern and synth sound.">
+      <label class="control-group" data-tip="Load a built-in drum pattern and full modular synth rack preset.">
         <span>Pattern Preset</span>
         <select id="preset-select"></select>
       </label>
@@ -30,7 +30,7 @@
     <!-- Learn Mode Banner -->
     <section class="learn-banner" aria-live="polite">
       <span class="badge">LEARN MODE</span>
-      <p id="learn-text">Hover over any control, module toggle, or knob to see how it shapes the sound.</p>
+      <p id="learn-text">Hover over any control, module toggle, or knob to see how it shapes the sound. Double-click any knob to reset it.</p>
     </section>
 
     <!-- Top Section: Wave Synthesizer + Individual Synth Scope + Modular Effects Rack -->
@@ -38,7 +38,7 @@
       <div class="synth-header-bar">
         <div class="synth-title-group">
           <h2>🌊 Wave Synthesizer &amp; Modular Effects Rack</h2>
-          <span class="scope-hint">Shapes the Synth &amp; Master Effects Bus</span>
+          <span class="scope-hint">Keys A–K play a C-Major scale • Double-click any knob to reset</span>
         </div>
 
         <div class="synth-quick-controls">
@@ -65,13 +65,13 @@
             </select>
           </label>
 
-          <button id="test-synth-btn" class="btn btn-secondary" data-tip="Play a synthesizer note through the 4 modular effect units below.">
+          <button id="test-synth-btn" class="btn btn-secondary" data-tip="Play a synthesizer note through the 4 modular effect units below (or press keys A–K).">
             🎹 Play Synth Note
           </button>
         </div>
 
         <!-- Dedicated Synthesizer Live Oscilloscope -->
-        <div class="track-scope-box synth-scope-box" data-tip="Live Synth Oscilloscope: shows the synthesizer waveform before it enters the master bus.">
+        <div class="track-scope-box synth-scope-box" data-tip="Live Synth Oscilloscope: bright blue shows your shaped wave; faint gray shows the raw wave before effects.">
           <span class="scope-label">SYNTH WAVE</span>
           <canvas id="scope-synth" class="mini-oscilloscope" width="220" height="54"></canvas>
         </div>
@@ -139,6 +139,7 @@
             <input type="range" id="swing-slider" min="0" max="60" step="5" value="0" />
           </label>
 
+          <button id="inspire-btn" class="btn btn-secondary" data-tip="Inspire Me: generates a fresh, musically balanced drum groove with strong kicks and crisp backbeats.">🎲 Inspire Me</button>
           <button id="clear-btn" class="btn btn-ghost" data-tip="Turn off all active steps in the grid.">Clear Grid</button>
         </div>
       </div>
@@ -160,7 +161,7 @@
         </div>
       </div>
 
-      <p id="sample-status" class="status-note">Each track has its own live oscilloscope on the left. Click any drum name to edit its EQ &amp; Attack knobs.</p>
+      <p id="sample-status" class="status-note">Keys 1–4 trigger drums live • Use M (Mute) &amp; S (Solo) to isolate tracks • Click any drum name to edit its EQ &amp; Attack knobs.</p>
       <div id="sequencer-grid" class="sequencer-grid"></div>
     </section>
   </main>
