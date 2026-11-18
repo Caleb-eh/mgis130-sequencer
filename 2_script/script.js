@@ -106,39 +106,38 @@ function createReverbImpulse(ctx, duration = 1.6, decay = 2.4) {
 
 // Register a dedicated AnalyserNode for an individual instrument channel
 function ensureChannelAnalyser(channelId, color) {
-  if (!audioCtx) return null;
   if (!channelAnalysers[channelId]) {
-    const analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 512;
-    analyser.smoothingTimeConstant = 0.8;
     channelAnalysers[channelId] = {
-      analyser,
-      color,
-      dataArray: new Uint8Array(analyser.frequencyBinCount),
+      analyser: null,
+      color: color || "#38bdf8",
+      dataArray: null,
       canvas: null,
       ctx: null
     };
   }
+  if (color) {
+    channelAnalysers[channelId].color = color;
+  }
+  // Create the real Web Audio AnalyserNode once audioCtx exists (even if canvas was bound earlier)
+  if (audioCtx && !channelAnalysers[channelId].analyser) {
+    const analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 512;
+    analyser.smoothingTimeConstant = 0.8;
+    channelAnalysers[channelId].analyser = analyser;
+    channelAnalysers[channelId].dataArray = new Uint8Array(analyser.frequencyBinCount);
+    if (fxInputBus) {
+      analyser.connect(fxInputBus);
+    }
+  }
   return channelAnalysers[channelId].analyser;
 }
 
-// Attach a DOM <canvas> element to an existing channel analyser
+// Attach a DOM <canvas> element to a channel entry
 function bindCanvasToChannel(channelId, canvasEl, color) {
   if (!canvasEl) return;
-  if (audioCtx) ensureChannelAnalyser(channelId, color);
-  if (!channelAnalysers[channelId]) {
-    channelAnalysers[channelId] = {
-      analyser: null,
-      color,
-      dataArray: null,
-      canvas: canvasEl,
-      ctx: canvasEl.getContext("2d")
-    };
-  } else {
-    channelAnalysers[channelId].canvas = canvasEl;
-    channelAnalysers[channelId].ctx = canvasEl.getContext("2d");
-    channelAnalysers[channelId].color = color;
-  }
+  ensureChannelAnalyser(channelId, color);
+  channelAnalysers[channelId].canvas = canvasEl;
+  channelAnalysers[channelId].ctx = canvasEl.getContext("2d");
 }
 
 // Initialize Web Audio API, per-track analysers, and the Master Effects Bus
@@ -206,11 +205,9 @@ function initAudio() {
     ensureChannelAnalyser("synth", "#38bdf8");
     const synthCanvas = document.getElementById("scope-synth");
     if (synthCanvas) bindCanvasToChannel("synth", synthCanvas, "#38bdf8");
-    channelAnalysers.synth.analyser.connect(fxInputBus);
 
     WAVECRAFT_DATA.tracks.forEach((t) => {
-      const an = ensureChannelAnalyser(t.id, t.color);
-      an.connect(fxInputBus);
+      ensureChannelAnalyser(t.id, t.color);
     });
 
     // Re-bind any already-rendered drum canvases
@@ -283,7 +280,7 @@ function playDrumSound(trackId) {
   const s = drumSettings[trackId];
   if (!s || s.volume <= 0.01) return;
 
-  const trackAnalyser = ensureChannelAnalyser(trackId, "#38bdf8");
+  const trackAnalyser = ensureChannelAnalyser(trackId);
   const now = audioCtx.currentTime;
   const attack = Math.max(0.001, s.attack);
   const totalTime = attack + s.decay;
