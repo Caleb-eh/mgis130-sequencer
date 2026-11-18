@@ -14,11 +14,6 @@
     </div>
 
     <div class="transport-controls">
-      <button id="play-btn" class="btn btn-primary" data-tip="Start or stop the drum loop (Shortcut: Spacebar).">▶ Play</button>
-      <label class="control-group" data-tip="Beats Per Minute: controls how fast the loop plays.">
-        <span>BPM</span>
-        <input type="number" id="bpm-input" value="120" min="60" max="200" />
-      </label>
       <label class="control-group" data-tip="Load a built-in drum pattern and full modular synth rack preset.">
         <span>Pattern Preset</span>
         <select id="preset-select"></select>
@@ -27,13 +22,29 @@
   </header>
 
   <main class="workspace">
-    <!-- Learn Mode Banner -->
-    <section class="learn-banner" aria-live="polite">
-      <span class="badge">LEARN MODE</span>
-      <p id="learn-text">Hover over any control, module toggle, or knob to see how it shapes the sound. Double-click any knob to reset it.</p>
+    <!-- Interactive Learn Mode Sound Design Guide -->
+    <section class="learn-guide" aria-live="polite">
+      <div class="learn-guide-header">
+        <span class="badge">LEARN MODE • SOUND DESIGN GUIDE</span>
+        <strong id="learn-title">Hover or turn any knob to inspect the sound wave</strong>
+      </div>
+      <div class="learn-guide-grid">
+        <div class="learn-card">
+          <span class="learn-card-tag">1. WHAT IT IS</span>
+          <p id="learn-what">Every control shapes either the pitch, volume envelope, frequency balance, or room space of your sound.</p>
+        </div>
+        <div class="learn-card">
+          <span class="learn-card-tag">2. WHAT TO LISTEN FOR</span>
+          <p id="learn-listen">Listen for changes in brightness, punch, grit, or echo tails as you audition notes and drum loops.</p>
+        </div>
+        <div class="learn-card">
+          <span class="learn-card-tag">3. WHAT TO WATCH ON THE WAVE</span>
+          <p id="learn-watch">Watch the static waveform preview reshape immediately as you turn knobs, and track the glowing playhead as audio plays.</p>
+        </div>
+      </div>
     </section>
 
-    <!-- Top Section: Wave Synthesizer + Individual Synth Scope + Modular Effects Rack -->
+    <!-- Top Section: Wave Synthesizer + Static Waveform Preview + Modular Effects Rack -->
     <section class="panel synth-rack-panel">
       <div class="synth-header-bar">
         <div class="synth-title-group">
@@ -65,15 +76,15 @@
             </select>
           </label>
 
-          <button id="test-synth-btn" class="btn btn-secondary" data-tip="Play a synthesizer note through the 4 modular effect units below (or press keys A–K).">
+          <button id="test-synth-btn" class="btn btn-secondary" data-tip="Play a synthesizer note through all 4 modular effect units below (or press keys A–K).">
             🎹 Play Synth Note
           </button>
         </div>
 
-        <!-- Dedicated Synthesizer Live Oscilloscope -->
-        <div class="track-scope-box synth-scope-box" data-tip="Live Synth Oscilloscope: bright blue shows your shaped wave; faint gray shows the raw wave before effects.">
-          <span class="scope-label">SYNTH WAVE</span>
-          <canvas id="scope-synth" class="mini-oscilloscope" width="220" height="54"></canvas>
+        <!-- Dedicated Synthesizer Static Waveform + Scrubbing Playhead -->
+        <div class="track-scope-box synth-scope-box" data-tip="Static Synth Wave Preview: updates live as you turn knobs, with a glowing playhead sweeping across when triggered.">
+          <span class="scope-label">SYNTH WAVEFORM PREVIEW</span>
+          <canvas id="scope-synth" class="mini-oscilloscope" width="240" height="58"></canvas>
         </div>
       </div>
 
@@ -109,38 +120,56 @@
           <div class="module-knobs" id="knobs-dynamics"></div>
         </div>
 
-        <!-- Module 4: Space & Time (Teal/Green) -->
+        <!-- Module 4: Space & Time (Teal/Green - Synth Only) -->
         <div class="rack-module module-teal" id="module-space">
           <div class="module-header">
-            <span class="module-title">4. Space &amp; Time</span>
-            <button type="button" class="bypass-btn active" data-module="space" data-tip="Bypass Echo and Reverb to hear the dry sound without room space.">ON</button>
+            <span class="module-title">4. Space &amp; Time (Synth)</span>
+            <button type="button" class="bypass-btn active" data-module="space" data-tip="Bypass Echo and Reverb on the Synthesizer. Drums bypass this module so beats stay punchy.">ON</button>
           </div>
           <div class="module-knobs" id="knobs-space"></div>
         </div>
       </div>
     </section>
 
-    <!-- Bottom Row: Drum Sequencer & Drum Sound Editor -->
+    <!-- Bottom Row: Drum Sequencer, Transport Controls, Metronome & Drum Sound Editor -->
     <section class="panel">
       <div class="panel-header">
         <h2>🥁 Drum Sequencer &amp; Sound Rack</h2>
-        <div class="quantize-controls">
-          <label class="control-group" data-tip="Quantization Grid: switch between 8 steps (1/8 notes), 16 steps (1/16 notes), or 32 steps (1/32 notes).">
-            <span>Quantize</span>
-            <select id="steps-select">
-              <option value="8">8 Steps (1/8)</option>
-              <option value="16" selected>16 Steps (1/16)</option>
-              <option value="32">32 Steps (1/32)</option>
-            </select>
-          </label>
 
-          <label class="control-group" data-tip="Swing: delays every second step slightly to create a human, bouncy groove.">
-            <span>Swing (<span id="swing-val">0</span>%)</span>
-            <input type="range" id="swing-slider" min="0" max="60" step="5" value="0" />
-          </label>
+        <div class="sequencer-toolbar">
+          <!-- Transport & Metronome Group -->
+          <div class="sequencer-transport">
+            <button id="play-btn" class="btn btn-primary" data-tip="Start or stop the drum loop and metronome (Shortcut: Spacebar).">▶ Play</button>
 
-          <button id="inspire-btn" class="btn btn-secondary" data-tip="Inspire Me: generates a fresh, musically balanced drum groove with strong kicks and crisp backbeats.">🎲 Inspire Me</button>
-          <button id="clear-btn" class="btn btn-ghost" data-tip="Turn off all active steps in the grid.">Clear Grid</button>
+            <label class="control-group" data-tip="Beats Per Minute: controls how fast the drum loop and metronome play.">
+              <span>BPM</span>
+              <input type="number" id="bpm-input" value="120" min="60" max="200" />
+            </label>
+
+            <button type="button" id="metro-btn" class="btn btn-metro" aria-pressed="false" data-tip="Built-In Metronome: plays a crisp dry woodblock click on every quarter-note beat (higher pitch on Beat 1).">
+              ⏱️ Metronome: OFF
+            </button>
+          </div>
+
+          <!-- Grid & Groove Controls -->
+          <div class="quantize-controls">
+            <label class="control-group" data-tip="Quantization Grid: switch between 8 steps (1/8 notes), 16 steps (1/16 notes), or 32 steps (1/32 notes).">
+              <span>Quantize</span>
+              <select id="steps-select">
+                <option value="8">8 Steps (1/8)</option>
+                <option value="16" selected>16 Steps (1/16)</option>
+                <option value="32">32 Steps (1/32)</option>
+              </select>
+            </label>
+
+            <label class="control-group" data-tip="Swing: delays every second step slightly to create a human, bouncy groove.">
+              <span>Swing (<span id="swing-val">0</span>%)</span>
+              <input type="range" id="swing-slider" min="0" max="60" step="5" value="0" />
+            </label>
+
+            <button id="inspire-btn" class="btn btn-secondary" data-tip="Inspire Me: generates a fresh, musically balanced drum groove with strong kicks and crisp backbeats.">🎲 Inspire Me</button>
+            <button id="clear-btn" class="btn btn-ghost" data-tip="Turn off all active steps in the grid.">Clear Grid</button>
+          </div>
         </div>
       </div>
 
@@ -151,7 +180,7 @@
             <span class="badge" id="editor-track-badge">KICK</span>
             <strong id="editor-track-title">Kick Sound Editor</strong>
           </div>
-          <button id="preview-drum-btn" class="btn btn-secondary btn-sm" data-tip="Hear the selected drum sound with your current EQ and attack settings.">
+          <button id="preview-drum-btn" class="btn btn-secondary btn-sm" data-tip="Hear the selected drum sound and watch the playhead sweep across its static waveform preview.">
             🔊 Preview Drum
           </button>
         </div>

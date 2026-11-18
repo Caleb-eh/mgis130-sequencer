@@ -1,38 +1,42 @@
 // 2_script/script.js
-// PROCESSING & PRESENTATION: Web Audio Lookahead Scheduler, real-time noise gate, rotary knobs, and ghost oscilloscopes.
+// PROCESSING & PRESENTATION: Lookahead scheduler, dry metronome, synth-isolated Echo/Reverb, static wave previews + animated playheads, and interactive Learn Guide.
 
 let audioCtx = null;
 let noiseBuffer = null;
 let reverbImpulseBuffer = null;
 let isPlaying = false;
+let metronomeEnabled = false;
 
 // Lookahead Web Audio Scheduler state
 let currentScheduleStep = 0;
 let nextNoteTime = 0.0;
 let schedulerTimerId = null;
-const lookaheadMs = 25.0; // How frequently to call scheduling function (ms)
-const scheduleAheadTime = 0.1; // How far ahead to schedule audio (sec)
-const visualStepQueue = []; // { step, time }
+const lookaheadMs = 25.0;
+const scheduleAheadTime = 0.1;
+const visualStepQueue = [];
 let lastDrawnVisualStep = -1;
-
-// Dedicated per-channel AnalyserNodes & Canvas registry (with raw/ghost trace support)
-const channelAnalysers = {};
-let animLoopStarted = false;
 
 // Master & FX Audio Nodes
 let masterBusGain = null;
-let fxInputBus = null;
+let sharedFxInputBus = null; // Drive -> Compressor -> Noise Gate (shared by Synth & Drums)
 let driveNode = null;
 let compressorNode = null;
 let gateAnalyserNode = null;
 let gateTimeData = null;
 let gateGainNode = null;
+
+// Synth-Isolated Space & Time Nodes (Echo & Reverb affect ONLY the Wave Synthesizer)
+let synthSpaceInputBus = null;
+let synthDryGain = null;
 let delayNode = null;
 let delayFeedbackGain = null;
 let delayWetGain = null;
 let reverbConvolver = null;
 let reverbWetGain = null;
-let dryBusGain = null;
+
+// Static Waveform Canvas & Scrubbing Playhead Registry
+const channelVisuals = {}; // { synth: { canvas, ctx, color, wavePoints, playhead }, kick: {...}, ... }
+let animLoopStarted = false;
 
 // Sequencer & Drum Settings State
 let stepCount = 16;
@@ -40,7 +44,7 @@ let swingPercent = 0;
 let selectedTrackId = "kick";
 let gridState = {};
 let drumSettings = {};
-const trackMuteSolo = {}; // { kick: { muted: false, solo: false }, ... }
+const trackMuteSolo = {};
 
 // Modular Rack Parameter State & Bypass Flags
 const rackState = {
@@ -62,7 +66,6 @@ const DRUM_KEY_MAP = {
   "4": "clap"
 };
 
-// C-Major scale (C4 to C5) mapped to A S D F G H J K
 const SYNTH_KEY_MAP = {
   a: 261.63, // C4
   s: 293.66, // D4
@@ -74,8 +77,9 @@ const SYNTH_KEY_MAP = {
   k: 523.25  // C5
 };
 
-// DOM references
+// DOM References
 const playBtn = document.getElementById("play-btn");
+const metroBtn = document.getElementById("metro-btn");
 const bpmInput = document.getElementById("bpm-input");
 const presetSelect = document.getElementById("preset-select");
 const stepsSelect = document.getElementById("steps-select");
@@ -92,7 +96,20 @@ const sequencerGrid = document.getElementById("sequencer-grid");
 const drumKnobsContainer = document.getElementById("drum-knobs-container");
 const editorTrackBadge = document.getElementById("editor-track-badge");
 const editorTrackTitle = document.getElementById("editor-track-title");
-const learnText = document.getElementById("learn-text");
+
+// Interactive Sound Design Guide DOM elements
+const learnTitle = document.getElementById("learn-title");
+const learnWhat = document.getElementById("learn-what");
+const learnListen = document.getElementById("learn-listen");
+const learnWatch = document.getElementById("learn-watch");
+
+// Update the 3-part Interactive Sound Design Guide
+function updateSoundDesignGuide({ title, what, listen, watch }) {
+  if (learnTitle && title) learnTitle.textContent = title;
+  if (learnWhat && what) learnWhat.textContent = what;
+  if (learnListen && listen) learnListen.textContent = listen;
+  if (learnWatch && watch) watch.textContent = watch;
+}
 
 // Populate default rack parameter values from data.js
 function initRackDefaults() {
@@ -103,27 +120,28 @@ function initRackDefaults() {
   });
 }
 
-// Build distortion curve for WaveShaperNode
+// Exaggerated Hard-Knee / Soft-Clip Distortion Curve for unmistakable grit & wave squaring
 function makeDistortionCurve(amount) {
-  const k = amount * 2.5;
   const samples = 44100;
   const curve = new Float32Array(samples);
-  if (k <= 0.01) {
+  if (amount <= 0.5) {
     for (let i = 0; i < samples; i++) {
       curve[i] = (i * 2) / samples - 1;
     }
     return curve;
   }
-  const deg = Math.PI / 180;
+  const driveGain = 1 + (amount / 100) * 18;
   for (let i = 0; i < samples; i++) {
     const x = (i * 2) / samples - 1;
-    curve[i] = ((3 + k) * x * 20 * deg) / (Math.PI + k * Math.abs(x));
+    // Hyperbolic tangent saturation pushed hard so peaks visibly flatten into square edges
+    curve[i] = Math.tanh(x * driveGain) / Math.tanh(driveGain * 0.85);
+    curve[i] = Math.max(-1, Math.min(1, curve[i]));
   }
   return curve;
 }
 
-// Generate synthetic room impulse response for ConvolverNode Reverb
-function createReverbImpulse(ctx, duration = 1.6, decay = 2.4) {
+// Generate synthetic hall impulse response for ConvolverNode Reverb
+function createReverbImpulse(ctx, duration = 2.1, decay = 2.0) {
   const length = ctx.sampleRate * duration;
   const impulse = ctx.createBuffer(2, length, ctx.sampleRate);
   for (let ch = 0; ch < 2; ch++) {
@@ -135,53 +153,7 @@ function createReverbImpulse(ctx, duration = 1.6, decay = 2.4) {
   return impulse;
 }
 
-// Register dedicated AnalyserNodes (active + ghost raw reference) for an instrument channel
-function ensureChannelAnalyser(channelId, color) {
-  if (!channelAnalysers[channelId]) {
-    channelAnalysers[channelId] = {
-      analyser: null,
-      rawAnalyser: null,
-      color: color || "#38bdf8",
-      dataArray: null,
-      rawDataArray: null,
-      canvas: null,
-      ctx: null
-    };
-  }
-  if (color) {
-    channelAnalysers[channelId].color = color;
-  }
-
-  if (audioCtx && !channelAnalysers[channelId].analyser) {
-    const analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 512;
-    analyser.smoothingTimeConstant = 0.8;
-
-    const rawAnalyser = audioCtx.createAnalyser();
-    rawAnalyser.fftSize = 512;
-    rawAnalyser.smoothingTimeConstant = 0.8;
-
-    channelAnalysers[channelId].analyser = analyser;
-    channelAnalysers[channelId].dataArray = new Uint8Array(analyser.frequencyBinCount);
-    channelAnalysers[channelId].rawAnalyser = rawAnalyser;
-    channelAnalysers[channelId].rawDataArray = new Uint8Array(rawAnalyser.frequencyBinCount);
-
-    if (fxInputBus) {
-      analyser.connect(fxInputBus);
-    }
-  }
-  return channelAnalysers[channelId];
-}
-
-// Attach a DOM <canvas> element to a channel entry
-function bindCanvasToChannel(channelId, canvasEl, color) {
-  if (!canvasEl) return;
-  ensureChannelAnalyser(channelId, color);
-  channelAnalysers[channelId].canvas = canvasEl;
-  channelAnalysers[channelId].ctx = canvasEl.getContext("2d");
-}
-
-// Initialize Web Audio API, per-track analysers, real-time Noise Gate follower, and Master FX Bus
+// Initialize Web Audio API with isolated Synth Space/Time routing and Dry Metronome output
 function initAudio() {
   if (!audioCtx) {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -197,12 +169,26 @@ function initAudio() {
 
     reverbImpulseBuffer = createReverbImpulse(audioCtx);
 
-    // Master Effects Bus
-    fxInputBus = audioCtx.createGain();
     masterBusGain = audioCtx.createGain();
     masterBusGain.gain.value = 0.9;
+    masterBusGain.connect(audioCtx.destination);
 
-    // Dynamics & Grit nodes + Real-time Gate Analyser
+    // 1. SYNTH-ONLY SPACE & TIME BUS (Echo + Reverb affect ONLY the synthesizer)
+    synthSpaceInputBus = audioCtx.createGain();
+    synthDryGain = audioCtx.createGain();
+    synthDryGain.gain.value = 1.0;
+
+    delayNode = audioCtx.createDelay(1.0);
+    delayNode.delayTime.value = 0.28;
+    delayFeedbackGain = audioCtx.createGain();
+    delayWetGain = audioCtx.createGain();
+
+    reverbConvolver = audioCtx.createConvolver();
+    reverbConvolver.buffer = reverbImpulseBuffer;
+    reverbWetGain = audioCtx.createGain();
+
+    // 2. SHARED DYNAMICS & GRIT BUS (Drive -> Compressor -> Noise Gate -> Master)
+    sharedFxInputBus = audioCtx.createGain();
     driveNode = audioCtx.createWaveShaper();
     driveNode.oversample = "2x";
 
@@ -213,55 +199,29 @@ function initAudio() {
     gateTimeData = new Float32Array(gateAnalyserNode.fftSize);
 
     gateGainNode = audioCtx.createGain();
-    gateGainNode.gain.value = 1;
+    gateGainNode.gain.value = 1.0;
 
-    // Space & Time nodes (Echo & Reverb)
-    dryBusGain = audioCtx.createGain();
-    delayNode = audioCtx.createDelay(1.0);
-    delayNode.delayTime.value = 0.28;
-    delayFeedbackGain = audioCtx.createGain();
-    delayWetGain = audioCtx.createGain();
+    // Wire Synth Space Bus -> Shared Dynamics Bus
+    // Drums connect directly to sharedFxInputBus, completely bypassing Echo & Reverb!
+    synthSpaceInputBus.connect(synthDryGain);
+    synthDryGain.connect(sharedFxInputBus);
 
-    reverbConvolver = audioCtx.createConvolver();
-    reverbConvolver.buffer = reverbImpulseBuffer;
-    reverbWetGain = audioCtx.createGain();
-
-    // Wire Master FX Graph:
-    // fxInputBus -> driveNode -> compressorNode -> gateAnalyserNode -> gateGainNode -> (Dry + Delay + Reverb) -> masterBusGain -> destination
-    fxInputBus.connect(driveNode);
-    driveNode.connect(compressorNode);
-    compressorNode.connect(gateAnalyserNode);
-    gateAnalyserNode.connect(gateGainNode);
-
-    gateGainNode.connect(dryBusGain);
-    dryBusGain.connect(masterBusGain);
-
-    gateGainNode.connect(delayNode);
+    synthSpaceInputBus.connect(delayNode);
     delayNode.connect(delayFeedbackGain);
     delayFeedbackGain.connect(delayNode);
     delayNode.connect(delayWetGain);
-    delayWetGain.connect(masterBusGain);
+    delayWetGain.connect(sharedFxInputBus);
 
-    gateGainNode.connect(reverbConvolver);
+    synthSpaceInputBus.connect(reverbConvolver);
     reverbConvolver.connect(reverbWetGain);
-    reverbWetGain.connect(masterBusGain);
+    reverbWetGain.connect(sharedFxInputBus);
 
-    masterBusGain.connect(audioCtx.destination);
-
-    // Ensure channel analysers exist for synth & all drum tracks
-    ensureChannelAnalyser("synth", "#38bdf8");
-    const synthCanvas = document.getElementById("scope-synth");
-    if (synthCanvas) bindCanvasToChannel("synth", synthCanvas, "#38bdf8");
-
-    WAVECRAFT_DATA.tracks.forEach((t) => {
-      ensureChannelAnalyser(t.id, t.color);
-    });
-
-    document.querySelectorAll("[data-scope-track]").forEach((canvasEl) => {
-      const tid = canvasEl.dataset.scopeTrack;
-      const trackObj = WAVECRAFT_DATA.tracks.find((tr) => tr.id === tid);
-      if (trackObj) bindCanvasToChannel(tid, canvasEl, trackObj.color);
-    });
+    // Wire Shared Dynamics Bus -> Master Out
+    sharedFxInputBus.connect(driveNode);
+    driveNode.connect(compressorNode);
+    compressorNode.connect(gateAnalyserNode);
+    gateAnalyserNode.connect(gateGainNode);
+    gateGainNode.connect(masterBusGain);
 
     updateMasterFxParams();
   }
@@ -276,7 +236,7 @@ function initAudio() {
   }
 }
 
-// Real-Time Noise Gate Envelope Follower (attenuates quiet audio tails below dB threshold)
+// Real-Time Noise Gate Envelope Follower
 function updateRealtimeNoiseGate() {
   if (!audioCtx || !gateAnalyserNode || !gateGainNode) return;
   const now = audioCtx.currentTime;
@@ -293,17 +253,16 @@ function updateRealtimeNoiseGate() {
   }
   const rms = Math.sqrt(sumSquares / gateTimeData.length);
   const currentDb = rms > 0.00001 ? 20 * Math.log10(rms) : -100;
-  const thresholdDb = rackState.params.gate; // -80 dB to -10 dB
+  const thresholdDb = rackState.params.gate;
 
-  // If threshold is at the very bottom (-80 dB), keep gate open; otherwise attenuate below threshold
   if (thresholdDb <= -79 || currentDb >= thresholdDb) {
-    gateGainNode.gain.setTargetAtTime(1.0, now, 0.008); // Fast open
+    gateGainNode.gain.setTargetAtTime(1.0, now, 0.006);
   } else {
-    gateGainNode.gain.setTargetAtTime(0.0, now, 0.045); // Smooth close on quiet tails
+    gateGainNode.gain.setTargetAtTime(0.0, now, 0.025);
   }
 }
 
-// Update Dynamics & Space audio nodes whenever knobs or bypass buttons change
+// Update Dynamics & Synth-Only Space audio nodes whenever knobs or bypass buttons change
 function updateMasterFxParams() {
   if (!audioCtx) return;
   const now = audioCtx.currentTime;
@@ -317,13 +276,13 @@ function updateMasterFxParams() {
   } else {
     driveNode.curve = makeDistortionCurve(rackState.params.drive);
     const compPct = rackState.params.compression / 100;
-    compressorNode.threshold.setValueAtTime(-6 - compPct * 34, now);
-    compressorNode.ratio.setValueAtTime(1 + compPct * 11, now);
-    compressorNode.attack.setValueAtTime(0.005, now);
-    compressorNode.release.setValueAtTime(0.15, now);
+    compressorNode.threshold.setValueAtTime(-4 - compPct * 42, now);
+    compressorNode.ratio.setValueAtTime(1 + compPct * 15, now);
+    compressorNode.attack.setValueAtTime(0.004, now);
+    compressorNode.release.setValueAtTime(0.14, now);
   }
 
-  // Module 4: Space & Time
+  // Module 4: Space & Time (Synth Only)
   if (rackState.bypass.space) {
     delayFeedbackGain.gain.setTargetAtTime(0, now, 0.01);
     delayWetGain.gain.setTargetAtTime(0, now, 0.01);
@@ -331,13 +290,289 @@ function updateMasterFxParams() {
   } else {
     const echoAmt = rackState.params.echo / 100;
     const revAmt = rackState.params.reverb / 100;
-    delayFeedbackGain.gain.setTargetAtTime(echoAmt * 0.65, now, 0.01);
-    delayWetGain.gain.setTargetAtTime(echoAmt * 0.55, now, 0.01);
-    reverbWetGain.gain.setTargetAtTime(revAmt * 0.75, now, 0.01);
+    delayFeedbackGain.gain.setTargetAtTime(echoAmt * 0.68, now, 0.01);
+    delayWetGain.gain.setTargetAtTime(echoAmt * 0.65, now, 0.01);
+    reverbWetGain.gain.setTargetAtTime(revAmt * 0.85, now, 0.01);
   }
 }
 
-// Initialize default per-drum settings and Mute/Solo flags
+// Synthesize crisp dry woodblock metronome click routed directly to masterBusGain (unaffected by FX)
+function playMetronomeClick(when, isBeatOne) {
+  if (!audioCtx || !metronomeEnabled) return;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+
+  osc.type = "triangle";
+  const startFreq = isBeatOne ? 1320 : 880;
+  osc.frequency.setValueAtTime(startFreq, when);
+  osc.frequency.exponentialRampToValueAtTime(startFreq * 0.55, when + 0.035);
+
+  gain.gain.setValueAtTime(0.0001, when);
+  gain.gain.linearRampToValueAtTime(isBeatOne ? 0.34 : 0.22, when + 0.002);
+  gain.gain.exponentialRampToValueAtTime(0.0001, when + 0.045);
+
+  osc.connect(gain);
+  gain.connect(masterBusGain); // Direct dry connection bypassing all FX
+
+  osc.start(when);
+  osc.stop(when + 0.05);
+}
+
+// ============================================================================
+// STATIC WAVEFORM PREVIEW GENERATOR + LIVE SCRUBBING PLAYHEAD ENGINE
+// ============================================================================
+
+function registerChannelCanvas(channelId, canvasEl, color) {
+  if (!canvasEl) return;
+  if (!channelVisuals[channelId]) {
+    channelVisuals[channelId] = {
+      canvas: canvasEl,
+      ctx: canvasEl.getContext("2d"),
+      color: color || "#38bdf8",
+      wavePoints: [],
+      playhead: null // { startTime, duration }
+    };
+  } else {
+    channelVisuals[channelId].canvas = canvasEl;
+    channelVisuals[channelId].ctx = canvasEl.getContext("2d");
+    if (color) channelVisuals[channelId].color = color;
+  }
+  recalculateStaticWaveform(channelId);
+}
+
+function triggerWaveformPlayhead(channelId, startTime, durationSec) {
+  const vis = channelVisuals[channelId];
+  if (!vis) return;
+  vis.playhead = {
+    startTime: startTime,
+    duration: Math.max(0.08, durationSec)
+  };
+}
+
+// Mathematical oscillator helper
+function sampleOscillator(type, phase) {
+  const p = ((phase % 1) + 1) % 1;
+  if (type === "sine") return Math.sin(p * Math.PI * 2);
+  if (type === "triangle") return 1 - 4 * Math.abs(Math.round(p - 0.25) - (p - 0.25));
+  if (type === "sawtooth") return 2 * p - 1;
+  if (type === "square") return p < 0.5 ? 1 : -1;
+  return Math.sin(p * Math.PI * 2);
+}
+
+// Recalculate high-resolution static waveform array whenever any knob or preset changes
+function recalculateStaticWaveform(channelId) {
+  const vis = channelVisuals[channelId];
+  if (!vis || !vis.canvas) return;
+
+  const numSamples = vis.canvas.width * 2; // 2x oversampled for crisp rendering
+  const points = new Float32Array(numSamples);
+
+  if (channelId === "synth") {
+    const waveType = waveSelect ? waveSelect.value : "sawtooth";
+    const { attack, decay, sustain, release, cutoff, resonance, modDepth, drive, compression, gate, echo, reverb } = rackState.params;
+    const adsrBypass = rackState.bypass.adsr;
+    const filterBypass = rackState.bypass.filter;
+    const dynBypass = rackState.bypass.dynamics;
+    const spaceBypass = rackState.bypass.space;
+
+    const holdTime = 0.25;
+    const totalDur = adsrBypass ? 0.65 : Math.max(0.25, attack + decay + holdTime + release);
+    const baseCycles = 14; // Visual cycles across preview window
+
+    let lpState = 0;
+    let bpState = 0;
+
+    for (let i = 0; i < numSamples; i++) {
+      const tNorm = i / (numSamples - 1);
+      const tSec = tNorm * totalDur;
+
+      // 1. ADSR Amplitude Envelope
+      let env = 1.0;
+      if (adsrBypass) {
+        env = tNorm < 0.85 ? 0.78 : Math.max(0, 0.78 * (1 - (tNorm - 0.85) / 0.15));
+      } else if (tSec < attack) {
+        env = tSec / Math.max(0.001, attack);
+      } else if (tSec < attack + decay) {
+        const dRatio = (tSec - attack) / Math.max(0.001, decay);
+        env = 1 - dRatio * (1 - sustain);
+      } else if (tSec < attack + decay + holdTime) {
+        env = sustain;
+      } else {
+        const rRatio = (tSec - (attack + decay + holdTime)) / Math.max(0.001, release);
+        env = sustain * Math.pow(Math.max(0, 1 - rRatio), 1.6);
+      }
+
+      // 2. Oscillator + LFO Modulation + Resonant Filter Simulation
+      const lfoWave = Math.sin(tNorm * Math.PI * 2 * (1.5 + (modDepth / 100) * 6));
+      const effectiveCutoff = filterBypass
+        ? 8500
+        : Math.max(60, Math.min(8500, cutoff + (modDepth / 100) * cutoff * 0.75 * lfoWave));
+
+      let rawSample = sampleOscillator(waveType, tNorm * baseCycles);
+
+      if (!filterBypass) {
+        const normCut = Math.min(0.95, Math.max(0.03, effectiveCutoff / 6500));
+        const qFactor = Math.min(0.92, (resonance / 30) * 0.88);
+        if (rackState.filterType === "lowpass") {
+          lpState += normCut * (rawSample - lpState + qFactor * bpState);
+          bpState = (1 - normCut * 0.5) * bpState + normCut * (rawSample - lpState);
+          rawSample = lpState;
+        } else {
+          lpState += normCut * (rawSample - lpState);
+          rawSample = (rawSample - lpState) * (1 + qFactor * 1.4);
+        }
+      }
+
+      let sample = rawSample * env;
+
+      // 3. Space & Time visual tail (Synth only: Echo bounces + Reverb wash)
+      if (!spaceBypass && (echo > 2 || reverb > 2)) {
+        if (echo > 2 && i > Math.floor(numSamples * 0.28)) {
+          const echoIdx = i - Math.floor(numSamples * 0.28);
+          sample += points[echoIdx] * (echo / 100) * 0.55;
+        }
+        if (reverb > 2 && tNorm > 0.25) {
+          const revWash = Math.sin(i * 0.47) * Math.cos(i * 0.23) * (reverb / 100) * 0.28 * (1 - tNorm * 0.6);
+          sample += revWash;
+        }
+      }
+
+      // 4. Dynamics & Grit (Compression lift, Hard Drive squaring, Noise Gate cutoff)
+      if (!dynBypass) {
+        if (compression > 0) {
+          const compBoost = 1 + (compression / 100) * 0.85;
+          sample = Math.sign(sample) * Math.pow(Math.abs(sample), 1 / compBoost);
+        }
+        if (drive > 0) {
+          const dGain = 1 + (drive / 100) * 14;
+          sample = Math.tanh(sample * dGain) / Math.tanh(dGain * 0.82);
+        }
+        // Noise gate threshold mapped from [-80..-6 dB] to linear amplitude
+        if (gate > -79) {
+          const gateLinear = Math.pow(10, gate / 32);
+          if (Math.abs(sample) < gateLinear) {
+            sample = 0;
+          }
+        }
+      }
+
+      points[i] = Math.max(-1, Math.min(1, sample));
+    }
+  } else {
+    // Drum Track Static Waveform Preview (reflecting preset, Attack, Low-Cut, Mid-Cut, High-Cut, and Volume)
+    const s = drumSettings[channelId];
+    if (!s) return;
+
+    const totalDur = Math.max(0.06, s.attack + s.decay);
+    const attackRatio = Math.min(0.65, s.attack / totalDur);
+    let lpState = 0;
+
+    for (let i = 0; i < numSamples; i++) {
+      const tNorm = i / (numSamples - 1);
+
+      // Amplitude envelope (Attack -> Exponential Decay)
+      let env = 0;
+      if (tNorm < attackRatio) {
+        env = tNorm / Math.max(0.001, attackRatio);
+      } else {
+        const decRatio = (tNorm - attackRatio) / Math.max(0.001, 1 - attackRatio);
+        env = Math.pow(Math.max(0, 1 - decRatio), 2.4);
+      }
+
+      // Pitch sweep from startFreq to endFreq
+      const freqCurve = s.startFreq * Math.pow(Math.max(20, s.endFreq) / s.startFreq, tNorm);
+      const phase = (freqCurve / 55) * tNorm * 4.5;
+      const tone = sampleOscillator(s.wave, phase);
+
+      // Deterministic pseudo-noise for snare/hat/clap texture
+      const pseudoNoise = Math.sin(i * 12.9898) * Math.cos(i * 78.233);
+      let raw = tone * (1 - s.noiseMix * 0.5) + pseudoNoise * s.noiseMix;
+
+      // EQ visual shaping (High-Cut smooths jagged noise; Low-Cut thins body; Mid-Cut scoops)
+      const highSmooth = Math.min(0.96, Math.max(0.08, s.highCut / 14000));
+      lpState += highSmooth * (raw - lpState);
+      raw = lpState;
+
+      const lowThin = Math.max(0.45, 1 - (s.lowCut - 20) / 2200);
+      const midFactor = Math.pow(10, s.midCut / 36);
+
+      const shaped = raw * env * lowThin * midFactor * Math.max(0.2, s.volume);
+      points[i] = Math.max(-1, Math.min(1, shaped));
+    }
+  }
+
+  vis.wavePoints = points;
+}
+
+// Render static waveform + glowing scrubbing playhead on a single channel canvas
+function drawChannelCanvas(vis, nowTime) {
+  if (!vis || !vis.ctx || !vis.canvas) return;
+  const { ctx, canvas, color, wavePoints, playhead } = vis;
+  const width = canvas.width;
+  const height = canvas.height;
+  const halfH = height * 0.5;
+
+  ctx.fillStyle = "#090f1d";
+  ctx.fillRect(0, 0, width, height);
+
+  // Subtle center zero-crossing grid line
+  ctx.strokeStyle = "rgba(148, 163, 184, 0.16)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, halfH);
+  ctx.lineTo(width, halfH);
+  ctx.stroke();
+
+  // Draw Static Waveform Preview
+  if (wavePoints && wavePoints.length > 0) {
+    ctx.strokeStyle = color || "#38bdf8";
+    ctx.lineWidth = 1.75;
+    ctx.beginPath();
+
+    const len = wavePoints.length;
+    for (let i = 0; i < len; i++) {
+      const x = (i / (len - 1)) * width;
+      const y = halfH - wavePoints[i] * (halfH - 4);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    // Subtle translucent fill under waveform
+    ctx.lineTo(width, halfH);
+    ctx.lineTo(0, halfH);
+    ctx.closePath();
+    ctx.fillStyle = `${color || "#38bdf8"}1c`;
+    ctx.fill();
+  }
+
+  // Draw Animated Glowing Playhead Line when triggered
+  if (playhead && nowTime !== null) {
+    const elapsed = nowTime - playhead.startTime;
+    if (elapsed >= 0 && elapsed <= playhead.duration) {
+      const progress = elapsed / playhead.duration;
+      const playX = progress * width;
+
+      ctx.save();
+      ctx.strokeStyle = "#ffffff";
+      ctx.shadowColor = color || "#38bdf8";
+      ctx.shadowBlur = 10;
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.moveTo(playX, 0);
+      ctx.lineTo(playX, height);
+      ctx.stroke();
+      ctx.restore();
+    } else if (elapsed > playhead.duration) {
+      vis.playhead = null;
+    }
+  }
+}
+
+// ============================================================================
+// DRUM & SYNTH AUDIO ENGINES
+// ============================================================================
+
 function initDrumSettings() {
   WAVECRAFT_DATA.tracks.forEach((track) => {
     drumSettings[track.id] = {
@@ -348,7 +583,6 @@ function initDrumSettings() {
   });
 }
 
-// Check whether a drum track is audible given Mute (M) and Solo (S) states
 function isTrackAudible(trackId) {
   const anySolo = Object.values(trackMuteSolo).some((state) => state.solo);
   const state = trackMuteSolo[trackId];
@@ -357,7 +591,7 @@ function isTrackAudible(trackId) {
   return !state.muted;
 }
 
-// Play a drum hit at a precise Web Audio timestamp (when = audioCtx.currentTime if immediate)
+// Play a drum hit routed to sharedFxInputBus (bypassing Synth-Only Echo & Reverb)
 function playDrumSound(trackId, when = null, ignoreMuteSolo = false) {
   initAudio();
   if (!ignoreMuteSolo && !isTrackAudible(trackId)) return;
@@ -365,10 +599,12 @@ function playDrumSound(trackId, when = null, ignoreMuteSolo = false) {
   const s = drumSettings[trackId];
   if (!s || s.volume <= 0.01) return;
 
-  const chNodes = ensureChannelAnalyser(trackId);
   const startTime = when !== null ? when : audioCtx.currentTime;
   const attack = Math.max(0.001, s.attack);
   const totalTime = attack + s.decay;
+
+  // Trigger animated playhead across this drum track's static waveform canvas
+  triggerWaveformPlayhead(trackId, startTime, Math.max(0.12, totalTime));
 
   // 1. Tone Oscillator
   const osc = audioCtx.createOscillator();
@@ -386,7 +622,7 @@ function playDrumSound(trackId, when = null, ignoreMuteSolo = false) {
   noiseGain.gain.value = s.noiseMix;
   noise.connect(noiseGain);
 
-  // 3. Amplitude Envelope (Raw pre-EQ tap goes to rawAnalyser for Ghost Waveform)
+  // 3. Amplitude Envelope
   const envGain = audioCtx.createGain();
   envGain.gain.setValueAtTime(0.0001, startTime);
   envGain.gain.linearRampToValueAtTime(s.volume, startTime + attack);
@@ -410,16 +646,11 @@ function playDrumSound(trackId, when = null, ignoreMuteSolo = false) {
   oscGain.connect(envGain);
   noiseGain.connect(envGain);
 
-  // Tap raw un-EQ'd signal into ghost reference analyser
-  if (chNodes.rawAnalyser) {
-    envGain.connect(chNodes.rawAnalyser);
-  }
-
-  // Route EQ'd signal into active track analyser
+  // Route drums directly to sharedFxInputBus (bypasses Synth-Only Echo & Reverb!)
   envGain.connect(lowCutFilter);
   lowCutFilter.connect(midCutFilter);
   midCutFilter.connect(highCutFilter);
-  highCutFilter.connect(chNodes.analyser);
+  highCutFilter.connect(sharedFxInputBus);
 
   osc.start(startTime);
   noise.start(startTime);
@@ -427,11 +658,10 @@ function playDrumSound(trackId, when = null, ignoreMuteSolo = false) {
   noise.stop(startTime + totalTime + 0.02);
 }
 
-// Play a synthesizer note shaped by ADSR Envelope, Filter & LFO Modulation, Dynamics, and Space
+// Play a synthesizer note routed through ADSR -> Filter/LFO -> Synth-Only Space/Time -> Shared Dynamics
 function playSynthNote(freq = 220) {
   initAudio();
   const now = audioCtx.currentTime;
-  const chNodes = ensureChannelAnalyser("synth", "#38bdf8");
 
   const osc = audioCtx.createOscillator();
   osc.type = waveSelect.value;
@@ -448,7 +678,7 @@ function playSynthNote(freq = 220) {
   } else {
     const { attack, decay, sustain, release } = rackState.params;
     const holdTime = 0.25;
-    const peakGain = 0.42;
+    const peakGain = 0.44;
     const sustainGain = Math.max(0.001, peakGain * sustain);
     totalNoteDuration = attack + decay + holdTime + release;
 
@@ -459,21 +689,10 @@ function playSynthNote(freq = 220) {
     envGain.gain.exponentialRampToValueAtTime(0.0001, now + totalNoteDuration);
   }
 
-  // Raw pre-filter ghost tap (shaped by envelope so amplitude aligns with active wave)
-  const rawTapGain = audioCtx.createGain();
-  rawTapGain.gain.value = 1.0;
-  osc.connect(rawTapGain);
-  // Route raw oscillator through a parallel envelope tap to rawAnalyser
-  const rawEnv = audioCtx.createGain();
-  rawEnv.gain.setValueAtTime(0.0001, now);
-  rawEnv.gain.linearRampToValueAtTime(0.35, now + 0.01);
-  rawEnv.gain.exponentialRampToValueAtTime(0.0001, now + totalNoteDuration);
-  rawTapGain.connect(rawEnv);
-  if (chNodes.rawAnalyser) {
-    rawEnv.connect(chNodes.rawAnalyser);
-  }
+  // Trigger animated playhead across the Synth's static waveform preview
+  triggerWaveformPlayhead("synth", now, totalNoteDuration);
 
-  // Module 2: Filter & LFO Modulation
+  // Module 2: Exaggerated Filter & LFO Modulation
   let lastNode = osc;
   let lfoOsc = null;
 
@@ -488,8 +707,8 @@ function playSynthNote(freq = 220) {
       lfoOsc = audioCtx.createOscillator();
       const lfoGain = audioCtx.createGain();
       lfoOsc.type = "sine";
-      lfoOsc.frequency.setValueAtTime(1.5 + (modAmt / 100) * 8, now);
-      lfoGain.gain.setValueAtTime((modAmt / 100) * (rackState.params.cutoff * 0.65), now);
+      lfoOsc.frequency.setValueAtTime(1.5 + (modAmt / 100) * 9, now);
+      lfoGain.gain.setValueAtTime((modAmt / 100) * (rackState.params.cutoff * 0.85), now);
       lfoOsc.connect(lfoGain);
       lfoGain.connect(filter.frequency);
       lfoOsc.start(now);
@@ -501,24 +720,37 @@ function playSynthNote(freq = 220) {
   }
 
   lastNode.connect(envGain);
-  envGain.connect(chNodes.analyser);
+  // Route exclusively through synthSpaceInputBus so Echo & Reverb affect ONLY the synth
+  envGain.connect(synthSpaceInputBus);
 
   osc.start(now);
   osc.stop(now + totalNoteDuration + 0.05);
 }
 
-// Reusable Rotary Knob Builder (mouse/touch drag, scroll wheel, and double-click reset to defaultValue)
-function createKnob({ label, min, max, step, value, defaultValue, unit, tip, accentColor, onChange }) {
+// ============================================================================
+// ROTARY KNOBS & INTERACTIVE UI BUILDERS
+// ============================================================================
+
+function createKnob({ label, min, max, step, value, defaultValue, unit, guideData, tip, accentColor, onChange }) {
   const resetTarget = defaultValue !== undefined ? defaultValue : value;
 
   const wrapper = document.createElement("div");
   wrapper.className = "knob-unit";
-  if (tip) {
-    wrapper.dataset.tip = `${tip} (Double-click to reset)`;
-    wrapper.addEventListener("mouseenter", () => {
-      learnText.textContent = wrapper.dataset.tip;
-    });
+
+  function showGuide() {
+    if (guideData) {
+      updateSoundDesignGuide(guideData);
+    } else if (tip) {
+      updateSoundDesignGuide({
+        title: label || "Parameter Control",
+        what: tip,
+        listen: "Listen for tonal balance, punch, or volume shifts as you adjust this control.",
+        watch: "Watch the static waveform preview update live to reflect your setting."
+      });
+    }
   }
+
+  wrapper.addEventListener("mouseenter", showGuide);
 
   const labelEl = document.createElement("span");
   labelEl.className = "knob-label";
@@ -562,6 +794,7 @@ function createKnob({ label, min, max, step, value, defaultValue, unit, tip, acc
     const stepped = Math.round(clamped / step) * step;
     currentVal = Number(stepped.toFixed(4));
     updateVisual(currentVal);
+    showGuide();
     onChange(currentVal);
   }
 
@@ -588,6 +821,7 @@ function createKnob({ label, min, max, step, value, defaultValue, unit, tip, acc
     e.preventDefault();
     startY = e.clientY;
     startVal = currentVal;
+    showGuide();
     window.addEventListener("mousemove", onPointerMove);
     window.addEventListener("mouseup", onPointerUp);
   });
@@ -595,6 +829,7 @@ function createKnob({ label, min, max, step, value, defaultValue, unit, tip, acc
   dial.addEventListener("touchstart", (e) => {
     startY = e.touches[0].clientY;
     startVal = currentVal;
+    showGuide();
     window.addEventListener("touchmove", onPointerMove);
     window.addEventListener("touchend", onPointerUp);
   }, { passive: true });
@@ -605,7 +840,6 @@ function createKnob({ label, min, max, step, value, defaultValue, unit, tip, acc
     setValue(currentVal + dir * step * 2);
   });
 
-  // Double-click any knob to smoothly snap back to its defaultValue
   dial.addEventListener("dblclick", (e) => {
     e.preventDefault();
     setValue(resetTarget);
@@ -633,18 +867,23 @@ function renderModularRack() {
         value: rackState.params[k.id],
         defaultValue: k.defaultValue,
         unit: k.unit,
-        tip: k.tip,
+        guideData: {
+          title: k.guideTitle,
+          what: k.what,
+          listen: k.listen,
+          watch: k.watch
+        },
         accentColor: modData.accent,
         onChange: (val) => {
           rackState.params[k.id] = val;
           updateMasterFxParams();
+          recalculateStaticWaveform("synth");
         }
       });
       container.appendChild(knobEl);
     });
   });
 
-  // Sync bypass button visuals with rackState.bypass
   document.querySelectorAll(".bypass-btn").forEach((btn) => {
     const modKey = btn.dataset.module;
     const isBypassed = rackState.bypass[modKey];
@@ -657,9 +896,10 @@ function renderModularRack() {
   if (filterModeBtn) {
     filterModeBtn.textContent = rackState.filterType === "highpass" ? "HP" : "LP";
   }
+
+  recalculateStaticWaveform("synth");
 }
 
-// Wire modular rack bypass and filter mode buttons once on startup
 function setupModularRackControls() {
   document.querySelectorAll(".bypass-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -673,6 +913,7 @@ function setupModularRackControls() {
       if (card) card.classList.toggle("bypassed", isBypassed);
 
       updateMasterFxParams();
+      recalculateStaticWaveform("synth");
     });
   });
 
@@ -680,6 +921,17 @@ function setupModularRackControls() {
     filterModeBtn.addEventListener("click", () => {
       rackState.filterType = rackState.filterType === "lowpass" ? "highpass" : "lowpass";
       filterModeBtn.textContent = rackState.filterType === "highpass" ? "HP" : "LP";
+      recalculateStaticWaveform("synth");
+      updateSoundDesignGuide({
+        title: `Filter Mode • ${rackState.filterType === "highpass" ? "High-Pass (HP)" : "Low-Pass (LP)"}`,
+        what: rackState.filterType === "highpass"
+          ? "High-Pass allows bright treble frequencies through while cutting deep sub-bass frequencies."
+          : "Low-Pass allows warm bass frequencies through while cutting sharp treble frequencies.",
+        listen: rackState.filterType === "highpass"
+          ? "Listen for the sound becoming thinner, lighter, and more airy."
+          : "Listen for the sound becoming warmer, darker, and rounder.",
+        watch: "Watch the jagged high-frequency teeth appear (HP) or smooth out (LP) on the synth wave."
+      });
     });
   }
 }
@@ -707,8 +959,16 @@ function renderDrumEditor() {
       value: settings.lowCut,
       defaultValue: basePreset.lowCut,
       unit: "Hz",
-      tip: "Low-Cut (High-Pass Filter): removes muddy sub-bass frequencies below this point.",
-      onChange: (v) => { settings.lowCut = v; }
+      guideData: {
+        title: `${track.name} EQ • Low-Cut (High-Pass)`,
+        what: "Removes muddy low-end frequencies below the selected Hz point so drums don't clash with bass.",
+        listen: "Listen for the heavy low-end thump thinning out into a tighter, punchier tap.",
+        watch: `Watch the overall vertical body height of the ${track.name} wave slim down as sub-bass is trimmed.`
+      },
+      onChange: (v) => {
+        settings.lowCut = v;
+        recalculateStaticWaveform(track.id);
+      }
     },
     {
       label: "Mid-Cut",
@@ -718,8 +978,16 @@ function renderDrumEditor() {
       value: settings.midCut,
       defaultValue: basePreset.midCut,
       unit: "dB",
-      tip: "Mid-Cut EQ: scoops out boxy midrange frequencies around 1 kHz to make drums cleaner.",
-      onChange: (v) => { settings.midCut = v; }
+      guideData: {
+        title: `${track.name} EQ • Mid-Cut Scoop`,
+        what: "Scoops out boxy midrange frequencies around 1 kHz to make drums sound cleaner and more modern.",
+        listen: "Listen for cardboard-like midrange honk disappearing, leaving crisp snap and deep punch.",
+        watch: `Watch the mid-body amplitude of the ${track.name} waveform tighten or expand.`
+      },
+      onChange: (v) => {
+        settings.midCut = v;
+        recalculateStaticWaveform(track.id);
+      }
     },
     {
       label: "High-Cut",
@@ -729,8 +997,16 @@ function renderDrumEditor() {
       value: settings.highCut,
       defaultValue: basePreset.highCut,
       unit: "Hz",
-      tip: "High-Cut (Low-Pass Filter): softens harsh treble frequencies above this point.",
-      onChange: (v) => { settings.highCut = v; }
+      guideData: {
+        title: `${track.name} EQ • High-Cut (Low-Pass)`,
+        what: "Rolls off bright treble frequencies above the cutoff point for a warmer, vintage lo-fi drum tone.",
+        listen: "Listen for sharp sizzle and metallic click softening into a warm, muted thud.",
+        watch: `Watch the fine, spiky noise oscillations on the ${track.name} wave smooth out into soft curves.`
+      },
+      onChange: (v) => {
+        settings.highCut = v;
+        recalculateStaticWaveform(track.id);
+      }
     },
     {
       label: "Attack",
@@ -740,8 +1016,16 @@ function renderDrumEditor() {
       value: settings.attack,
       defaultValue: basePreset.attack,
       unit: "ms",
-      tip: "Attack Time: controls how fast the drum hits peak volume. Low = sharp snap; High = soft fade-in.",
-      onChange: (v) => { settings.attack = v; }
+      guideData: {
+        title: `${track.name} Envelope • Attack Snap`,
+        what: "Controls how many milliseconds it takes for the drum transient to reach maximum volume.",
+        listen: "Low values give an instant, hard transient hit; higher values soften the front click into a reverse-like swell.",
+        watch: `Watch the peak point of the ${track.name} wave shift to the right as Attack increases.`
+      },
+      onChange: (v) => {
+        settings.attack = v;
+        recalculateStaticWaveform(track.id);
+      }
     }
   ];
 
@@ -750,7 +1034,6 @@ function renderDrumEditor() {
   });
 }
 
-// Update muted visual dimming across all track rows
 function updateMuteSoloVisuals() {
   const anySolo = Object.values(trackMuteSolo).some((s) => s.solo);
   document.querySelectorAll(".track-row").forEach((row) => {
@@ -768,7 +1051,6 @@ function updateMuteSoloVisuals() {
   });
 }
 
-// Build the sequencer rows (Track Select + M/S + Preset Dropdown + Volume Knob + Oscilloscope + Steps)
 function renderGrid() {
   sequencerGrid.innerHTML = "";
 
@@ -785,8 +1067,14 @@ function renderGrid() {
     selectBtn.className = "track-select-btn";
     selectBtn.style.borderLeft = `4px solid ${track.color}`;
     selectBtn.textContent = track.name;
-    selectBtn.dataset.tip = `Select ${track.name} to edit its Low-Cut, Mid-Cut, High-Cut, and Attack knobs above.`;
-    selectBtn.addEventListener("mouseenter", () => { learnText.textContent = selectBtn.dataset.tip; });
+    selectBtn.addEventListener("mouseenter", () => {
+      updateSoundDesignGuide({
+        title: `Track Select • ${track.name}`,
+        what: `Selects ${track.name} in the Drum Sound Editor above so you can sculpt its EQ and Attack.`,
+        listen: `Click ${track.name} and press 'Preview Drum' (or key '${Object.keys(DRUM_KEY_MAP).find((k) => DRUM_KEY_MAP[k] === track.id)}') to audition it.`,
+        watch: `Watch the ${track.name} static waveform preview reshape as you turn its editor knobs.`
+      });
+    });
     selectBtn.addEventListener("click", () => {
       selectedTrackId = track.id;
       document.querySelectorAll(".track-row").forEach((r) => {
@@ -803,8 +1091,6 @@ function renderGrid() {
     muteBtn.type = "button";
     muteBtn.className = "ms-btn mute-btn";
     muteBtn.textContent = "M";
-    muteBtn.dataset.tip = `Mute ${track.name}: silences this track without erasing its pattern.`;
-    muteBtn.addEventListener("mouseenter", () => { learnText.textContent = muteBtn.dataset.tip; });
     muteBtn.addEventListener("click", () => {
       trackMuteSolo[track.id].muted = !trackMuteSolo[track.id].muted;
       updateMuteSoloVisuals();
@@ -814,8 +1100,6 @@ function renderGrid() {
     soloBtn.type = "button";
     soloBtn.className = "ms-btn solo-btn";
     soloBtn.textContent = "S";
-    soloBtn.dataset.tip = `Solo ${track.name}: mutes all other tracks so you can hear this instrument alone.`;
-    soloBtn.addEventListener("mouseenter", () => { learnText.textContent = soloBtn.dataset.tip; });
     soloBtn.addEventListener("click", () => {
       trackMuteSolo[track.id].solo = !trackMuteSolo[track.id].solo;
       updateMuteSoloVisuals();
@@ -826,8 +1110,6 @@ function renderGrid() {
 
     const presetDropdown = document.createElement("select");
     presetDropdown.className = "track-preset-select";
-    presetDropdown.dataset.tip = `Switch between two built-in sound presets for ${track.name}.`;
-    presetDropdown.addEventListener("mouseenter", () => { learnText.textContent = presetDropdown.dataset.tip; });
 
     Object.entries(track.soundPresets).forEach(([pKey, pData]) => {
       const opt = document.createElement("option");
@@ -849,6 +1131,7 @@ function renderGrid() {
       document.querySelectorAll(".track-row").forEach((r) => {
         r.classList.toggle("selected-track", r.dataset.trackId === selectedTrackId);
       });
+      recalculateStaticWaveform(track.id);
       renderDrumEditor();
       playDrumSound(track.id, null, true);
     });
@@ -862,24 +1145,28 @@ function renderGrid() {
       value: drumSettings[track.id].volume,
       defaultValue: basePreset.volume,
       unit: "%",
-      tip: `${track.name} Volume: drag up/down to balance this instrument in the mix.`,
+      guideData: {
+        title: `${track.name} Mixer • Track Volume`,
+        what: `Sets the output level of ${track.name} in the drum mix.`,
+        listen: `Balance ${track.name} against the other drums so every beat hits clearly.`,
+        watch: `Watch the vertical amplitude of the ${track.name} static waveform scale with volume.`
+      },
       accentColor: track.color,
       onChange: (v) => {
         drumSettings[track.id].volume = v;
+        recalculateStaticWaveform(track.id);
       }
     });
     volKnob.classList.add("mini-knob");
 
-    // Dedicated Individual Oscilloscope Canvas per drum track
+    // Static Waveform Preview + Live Scrubbing Playhead Canvas per drum track
     const scopeCanvas = document.createElement("canvas");
     scopeCanvas.className = "track-mini-scope";
-    scopeCanvas.width = 90;
+    scopeCanvas.width = 96;
     scopeCanvas.height = 38;
     scopeCanvas.dataset.scopeTrack = track.id;
-    scopeCanvas.dataset.tip = `${track.name} Live Oscilloscope: bright line shows EQ'd wave; faint gray shows raw signal.`;
-    scopeCanvas.addEventListener("mouseenter", () => { learnText.textContent = scopeCanvas.dataset.tip; });
 
-    bindCanvasToChannel(track.id, scopeCanvas, track.color);
+    registerChannelCanvas(track.id, scopeCanvas, track.color);
 
     meta.appendChild(selectBtn);
     meta.appendChild(msGroup);
@@ -888,7 +1175,7 @@ function renderGrid() {
     meta.appendChild(scopeCanvas);
     row.appendChild(meta);
 
-    // Step buttons (8, 16, or 32 depending on quantization)
+    // Step buttons
     const stepsContainer = document.createElement("div");
     stepsContainer.className = "steps-container";
     stepsContainer.style.gridTemplateColumns = `repeat(${stepCount}, minmax(18px, 1fr))`;
@@ -906,7 +1193,6 @@ function renderGrid() {
       btn.dataset.track = track.id;
       btn.dataset.step = step;
 
-      // Toggle step state and DOM button styling directly without rebuilding the grid or canvases
       btn.addEventListener("click", () => {
         const isActive = gridState[track.id][step] ? 0 : 1;
         gridState[track.id][step] = isActive;
@@ -922,59 +1208,20 @@ function renderGrid() {
   });
 
   updateMuteSoloVisuals();
-  drawIdleScopes();
 }
 
-// Draw clean center reference lines when audio context hasn't started yet
-function drawIdleScopes() {
-  Object.values(channelAnalysers).forEach((ch) => {
-    if (!ch.ctx || !ch.canvas) return;
-    const { ctx, canvas, color } = ch;
-    ctx.fillStyle = "#090f1d";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = color || "#38bdf8";
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(0, canvas.height / 2);
-    ctx.lineTo(canvas.width, canvas.height / 2);
-    ctx.stroke();
-  });
-}
+// ============================================================================
+// 60FPS ANIMATION LOOP & LOOKAHEAD SCHEDULER
+// ============================================================================
 
-// Helper to draw a time-domain waveform trace on a canvas
-function drawWaveformTrace(ctx, dataArray, width, height, strokeStyle, lineWidth) {
-  const halfHeight = height * 0.5;
-  const bufferLength = dataArray.length;
-  const sliceWidth = width / bufferLength;
-  let x = 0;
-
-  ctx.lineWidth = lineWidth;
-  ctx.strokeStyle = strokeStyle;
-  ctx.beginPath();
-
-  for (let i = 0; i < bufferLength; i++) {
-    const v = dataArray[i] / 128.0;
-    const y = v * halfHeight;
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-    x += sliceWidth;
-  }
-
-  ctx.lineTo(width, halfHeight);
-  ctx.stroke();
-}
-
-// Single 60fps requestAnimationFrame loop handling visual step highlights, noise gate, and ghost oscilloscopes
 function animationFrameLoop() {
   requestAnimationFrame(animationFrameLoop);
+  const now = audioCtx ? audioCtx.currentTime : null;
 
   if (audioCtx) {
-    // 1. Update real-time Noise Gate envelope follower
     updateRealtimeNoiseGate();
 
-    // 2. Sync visual playhead with Web Audio clock
     if (isPlaying) {
-      const now = audioCtx.currentTime;
       while (visualStepQueue.length && visualStepQueue[0].time <= now) {
         const currentEvent = visualStepQueue.shift();
         if (currentEvent.step !== lastDrawnVisualStep) {
@@ -987,32 +1234,13 @@ function animationFrameLoop() {
     }
   }
 
-  // 3. Render all channel oscilloscopes with Ghost Reference Trace + Active Signal Trace
-  const channels = Object.values(channelAnalysers);
-  for (let c = 0; c < channels.length; c++) {
-    const ch = channels[c];
-    if (!ch.analyser || !ch.ctx || !ch.canvas) continue;
-
-    const { analyser, rawAnalyser, ctx, canvas, color, dataArray, rawDataArray } = ch;
-    const width = canvas.width;
-    const height = canvas.height;
-
-    ctx.fillStyle = "#090f1d";
-    ctx.fillRect(0, 0, width, height);
-
-    // Draw translucent gray "ghost" reference trace (pre-filter / pre-EQ signal)
-    if (rawAnalyser && rawDataArray) {
-      rawAnalyser.getByteTimeDomainData(rawDataArray);
-      drawWaveformTrace(ctx, rawDataArray, width, height, "rgba(148, 163, 184, 0.32)", 1.35);
-    }
-
-    // Draw bright active processed waveform in front
-    analyser.getByteTimeDomainData(dataArray);
-    drawWaveformTrace(ctx, dataArray, width, height, color || "#38bdf8", 1.85);
+  // Render static waveform previews + glowing scrubbing playheads for Synth & all Drums
+  const visuals = Object.values(channelVisuals);
+  for (let i = 0; i < visuals.length; i++) {
+    drawChannelCanvas(visuals[i], now);
   }
 }
 
-// Compute duration in seconds for a given step index (with Swing % applied)
 function getStepDurationSeconds(stepIndex) {
   const bpm = Math.max(40, Math.min(240, Number(bpmInput.value) || 120));
   const barSec = (60 / bpm) * 4;
@@ -1022,9 +1250,15 @@ function getStepDurationSeconds(stepIndex) {
   return isEvenStep ? baseStepSec * (1 + swingFactor) : baseStepSec * (1 - swingFactor);
 }
 
-// Schedule a single step's audio events at exact Web Audio time and queue its visual highlight
 function scheduleStepEvents(stepIndex, stepTime) {
   visualStepQueue.push({ step: stepIndex, time: stepTime });
+
+  // Trigger built-in Metronome click on every quarter-note beat
+  const stepsPerQuarter = stepCount / 4;
+  if (metronomeEnabled && stepIndex % stepsPerQuarter === 0) {
+    const isBeatOne = stepIndex === 0;
+    playMetronomeClick(stepTime, isBeatOne);
+  }
 
   WAVECRAFT_DATA.tracks.forEach((track) => {
     if (gridState[track.id][stepIndex]) {
@@ -1033,7 +1267,6 @@ function scheduleStepEvents(stepIndex, stepTime) {
   });
 }
 
-// Web Audio API Lookahead Scheduler (eliminates setTimeout jitter & tab-switch drift)
 function runLookaheadScheduler() {
   if (!isPlaying || !audioCtx) return;
 
@@ -1046,7 +1279,6 @@ function runLookaheadScheduler() {
   schedulerTimerId = setTimeout(runLookaheadScheduler, lookaheadMs);
 }
 
-// Start or stop the sequencer
 function togglePlay() {
   initAudio();
   isPlaying = !isPlaying;
@@ -1067,7 +1299,14 @@ function togglePlay() {
   }
 }
 
-// Load a pattern preset and synchronize ALL modular rack parameters
+function toggleMetronome() {
+  initAudio();
+  metronomeEnabled = !metronomeEnabled;
+  metroBtn.classList.toggle("active", metronomeEnabled);
+  metroBtn.setAttribute("aria-pressed", String(metronomeEnabled));
+  metroBtn.textContent = metronomeEnabled ? "⏱️ Metronome: ON" : "⏱️ Metronome: OFF";
+}
+
 function loadPreset(presetKey) {
   const preset = WAVECRAFT_DATA.presets[presetKey];
   if (!preset) return;
@@ -1079,7 +1318,6 @@ function loadPreset(presetKey) {
   swingSlider.value = swingPercent;
   swingVal.textContent = swingPercent;
 
-  // Reset all rack knobs to defaults first, then apply preset's rackParams so no stale values remain
   initRackDefaults();
   if (preset.rackParams) {
     Object.entries(preset.rackParams).forEach(([paramKey, paramVal]) => {
@@ -1101,40 +1339,33 @@ function loadPreset(presetKey) {
   renderGrid();
 }
 
-// Smart Beat Randomizer ("🎲 Inspire Me"): generates a cohesive, musical groove across 32 steps
 function generateSmartGroove() {
   const kick = Array(32).fill(0);
   const snare = Array(32).fill(0);
   const hihat = Array(32).fill(0);
   const clap = Array(32).fill(0);
 
-  const grooveStyle = Math.floor(Math.random() * 3); // 0: Four-on-floor, 1: Syncopated Funk/Boom-Bap, 2: Halftime Trap/Electro
+  const grooveStyle = Math.floor(Math.random() * 3);
 
   for (let bar = 0; bar < 2; bar++) {
     const offset = bar * 16;
-
-    // 1. Kick: Always anchored on beat 1 (step 0), plus style-appropriate syncopations
     kick[offset + 0] = 1;
     if (grooveStyle === 0) {
-      // Four-on-the-floor with occasional offbeat pickup
       kick[offset + 4] = 1;
       kick[offset + 8] = 1;
       kick[offset + 12] = 1;
       if (Math.random() > 0.5) kick[offset + 14] = 1;
     } else if (grooveStyle === 1) {
-      // Syncopated groove
       if (Math.random() > 0.35) kick[offset + 3] = 1;
       kick[offset + 6] = 1;
       if (Math.random() > 0.3) kick[offset + 10] = 1;
       if (Math.random() > 0.65) kick[offset + 13] = 1;
     } else {
-      // Half-time bounce
       if (Math.random() > 0.3) kick[offset + 3] = 1;
       if (Math.random() > 0.4) kick[offset + 7] = 1;
       kick[offset + 10] = 1;
     }
 
-    // 2. Snare: Crisp backbeats on 2 & 4 (steps 4 and 12) + occasional ghost note
     if (grooveStyle === 2) {
       snare[offset + 8] = 1;
       if (Math.random() > 0.5) snare[offset + 14] = 1;
@@ -1144,39 +1375,32 @@ function generateSmartGroove() {
       if (Math.random() > 0.6) snare[offset + 15] = 1;
     }
 
-    // 3. Hi-Hat: Steady rhythmic pulse (8ths or 16ths) with varied accents
     const hatDensity = Math.random();
     for (let s = 0; s < 16; s++) {
       if (hatDensity < 0.35) {
-        // Offbeat hats
         hihat[offset + s] = s % 4 === 2 ? 1 : 0;
       } else if (hatDensity < 0.75) {
-        // Driving 8th notes + occasional 16th roll
         hihat[offset + s] = s % 2 === 0 || (s >= 12 && Math.random() > 0.45) ? 1 : 0;
       } else {
-        // Busy 16th hats with occasional breath
         hihat[offset + s] = Math.random() > 0.15 ? 1 : 0;
       }
     }
 
-    // 4. Clap: Layers on beat 4 or adds percussive fills
-    if (Math.random() > 0.35) {
-      clap[offset + 12] = 1;
-    }
-    if (Math.random() > 0.55) {
-      clap[offset + 4] = 1;
-    }
-    if (Math.random() > 0.65) {
-      clap[offset + 14] = 1;
-    }
+    if (Math.random() > 0.35) clap[offset + 12] = 1;
+    if (Math.random() > 0.55) clap[offset + 4] = 1;
+    if (Math.random() > 0.65) clap[offset + 14] = 1;
   }
 
   gridState = { kick, snare, hihat, clap };
   renderGrid();
-  learnText.textContent = "🎲 Generated a fresh groove! Try adjusting Swing %, Mute/Solo, or the Modular FX rack to make it yours.";
+  updateSoundDesignGuide({
+    title: "🎲 Inspire Me • Fresh Groove Generated",
+    what: "Created a musically balanced 32-step drum pattern with anchored kicks and crisp backbeats.",
+    listen: "Toggle the Metronome ON to hear how syncopated hits bounce around the quarter-note pulse.",
+    watch: "Watch the glowing playheads sweep across each drum's waveform preview in time with the beat."
+  });
 }
 
-// Setup QWERTY Keyboard Playability (Spacebar, 1-4 Drums, A-K C-Major Synth Scale)
 function setupKeyboardShortcuts() {
   window.addEventListener("keydown", (e) => {
     const tag = e.target.tagName;
@@ -1185,46 +1409,44 @@ function setupKeyboardShortcuts() {
 
     const key = e.key.toLowerCase();
 
-    // Spacebar: Play / Stop sequencer
     if (e.code === "Space") {
       e.preventDefault();
       togglePlay();
       return;
     }
 
-    // Keys 1, 2, 3, 4: Trigger Kick, Snare, Closed Hat, Clap live
     if (DRUM_KEY_MAP[key]) {
       e.preventDefault();
-      const trackId = DRUM_KEY_MAP[key];
-      playDrumSound(trackId, null, true);
+      playDrumSound(DRUM_KEY_MAP[key], null, true);
       return;
     }
 
-    // Keys A, S, D, F, G, H, J, K: Play C-Major scale on Wave Synthesizer
     if (SYNTH_KEY_MAP[key]) {
       e.preventDefault();
-      const freq = SYNTH_KEY_MAP[key];
-      playSynthNote(freq);
+      playSynthNote(SYNTH_KEY_MAP[key]);
     }
   });
 }
 
-// Setup Learn Mode hover tooltips
 function setupTooltips() {
   document.querySelectorAll("[data-tip]").forEach((el) => {
     el.addEventListener("mouseenter", () => {
-      learnText.textContent = el.dataset.tip;
+      updateSoundDesignGuide({
+        title: "Control Overview",
+        what: el.dataset.tip,
+        listen: "Press Play or trigger a synth/drum note to hear how this control shapes the audio.",
+        watch: "Watch the waveform previews and scrubbing playheads respond immediately."
+      });
     });
   });
 }
 
-// Initialize the app when page loads
 function startApp() {
   initRackDefaults();
   initDrumSettings();
 
   const synthCanvas = document.getElementById("scope-synth");
-  if (synthCanvas) bindCanvasToChannel("synth", synthCanvas, "#38bdf8");
+  if (synthCanvas) registerChannelCanvas("synth", synthCanvas, "#38bdf8");
 
   Object.entries(WAVECRAFT_DATA.presets).forEach(([key, preset]) => {
     const opt = document.createElement("option");
@@ -1234,10 +1456,24 @@ function startApp() {
   });
 
   playBtn.addEventListener("click", togglePlay);
+  metroBtn.addEventListener("click", toggleMetronome);
+
+  waveSelect.addEventListener("change", () => {
+    recalculateStaticWaveform("synth");
+    const waveName = waveSelect.options[waveSelect.selectedIndex].text;
+    updateSoundDesignGuide({
+      title: `Oscillator Waveform • ${waveName}`,
+      what: "Chooses the foundational geometric shape of the vibrating sound wave before filtering or effects.",
+      listen: "Sine is pure and subby; Triangle is warm; Sawtooth is rich and buzzy; Square is hollow and retro.",
+      watch: "Watch the fundamental cycle shape on the Synth Waveform Preview switch immediately."
+    });
+  });
+
   testSynthBtn.addEventListener("click", () => {
     const noteFreq = parseFloat(noteSelect.value) || 220;
     playSynthNote(noteFreq);
   });
+
   previewDrumBtn.addEventListener("click", () => playDrumSound(selectedTrackId, null, true));
   presetSelect.addEventListener("change", (e) => loadPreset(e.target.value));
   inspireBtn.addEventListener("click", generateSmartGroove);
@@ -1266,6 +1502,11 @@ function startApp() {
   renderModularRack();
   renderDrumEditor();
   loadPreset("basicRock");
+
+  if (!animLoopStarted) {
+    animLoopStarted = true;
+    animationFrameLoop();
+  }
 }
 
 startApp();

@@ -1,8 +1,8 @@
 // 1_data/data.js
-// DATA LAYER: Holds modular knob definitions, Learn Mode tooltips, drum presets, and patterns.
+// DATA LAYER: Holds exaggerated educational DSP ranges, 3-part Sound Design Guide insights, drum presets, and patterns.
 
 const WAVECRAFT_DATA = {
-  // Modular Rack Knob Definitions (defaults, ranges, units, and plain-English Learn Mode tips)
+  // Modular Rack Knob Definitions with rich 3-part educational breakdowns (what, listen, watch)
   rackModules: {
     adsr: {
       title: "ADSR Envelope",
@@ -12,41 +12,53 @@ const WAVECRAFT_DATA = {
           id: "attack",
           label: "Attack",
           min: 0.005,
-          max: 1.0,
+          max: 1.4,
           step: 0.005,
           defaultValue: 0.02,
           unit: "ms",
-          tip: "Attack: how fast the sound fades in after you trigger it. Low = snappy punch; High = slow swell."
+          guideTitle: "ADSR • Attack Time",
+          what: "Controls how quickly the sound fades in from silence to peak volume after a note starts.",
+          listen: "Low values create an instant percussive punch; high values create a slow, violin-like swell.",
+          watch: "Watch the left slope of the waveform envelope ramp up gradually instead of starting at full height."
         },
         {
           id: "decay",
           label: "Decay",
           min: 0.02,
-          max: 1.5,
+          max: 1.8,
           step: 0.01,
           defaultValue: 0.25,
           unit: "ms",
-          tip: "Decay: how quickly the sound drops from its loudest peak down to the Sustain level."
+          guideTitle: "ADSR • Decay Time",
+          what: "Sets how fast the volume drops from its initial peak down to the Sustain holding level.",
+          listen: "Short decay creates snappy, plucky synth stabs; long decay produces a smoother, lingering drop.",
+          watch: "Watch the steepness of the downward slope right after the initial peak."
         },
         {
           id: "sustain",
           label: "Sustain",
-          min: 0.05,
+          min: 0.0,
           max: 1.0,
           step: 0.01,
           defaultValue: 0.55,
           unit: "%",
-          tip: "Sustain: the steady volume level held while a note stays active."
+          guideTitle: "ADSR • Sustain Level",
+          what: "Determines the steady volume height held during the middle body of the note.",
+          listen: "At 0%, the note dies out into a sharp pluck; at 100%, it stays at full organ-like loudness.",
+          watch: "Watch the middle plateau of the wave rise or shrink down toward the center line."
         },
         {
           id: "release",
           label: "Release",
-          min: 0.05,
-          max: 2.0,
+          min: 0.04,
+          max: 2.5,
           step: 0.02,
           defaultValue: 0.35,
           unit: "ms",
-          tip: "Release: how long the sound lingers and fades out after the note ends."
+          guideTitle: "ADSR • Release Tail",
+          what: "Controls how long the sound takes to fade back to zero after the note finishes.",
+          listen: "Low values cut off abruptly; high values let notes glide and ring out softly.",
+          watch: "Watch the right-hand tail of the waveform stretch out into a long, tapering fade."
         }
       ]
     },
@@ -57,22 +69,28 @@ const WAVECRAFT_DATA = {
         {
           id: "cutoff",
           label: "Cutoff",
-          min: 80,
-          max: 8000,
+          min: 60,
+          max: 8500,
           step: 20,
           defaultValue: 2200,
           unit: "Hz",
-          tip: "Filter Cutoff: the frequency boundary where the filter starts removing brightness (LP) or bass (HP)."
+          guideTitle: "Filter • Cutoff Frequency",
+          what: "Sets the frequency border where the filter removes high frequencies (LP) or low bass (HP).",
+          listen: "Turning Low-Pass down makes bright waves sound warm, muffled, and underwater.",
+          watch: "Watch sharp sawtooth/square edges smooth out into rounder, softer curves as highs are trimmed."
         },
         {
           id: "resonance",
           label: "Resonance",
           min: 0.5,
-          max: 18,
+          max: 28,
           step: 0.2,
-          defaultValue: 2.5,
+          defaultValue: 3.0,
           unit: "Q",
-          tip: "Resonance (Q): boosts frequencies right at the Cutoff point for a sharp, vocal, or acid whistle."
+          guideTitle: "Filter • Resonance (Q Peak)",
+          what: "Dramatically boosts a narrow band of frequencies right at the Cutoff frequency.",
+          listen: "Listen for an unmistakable, sharp whistling or vocal 'oww' peak ringing at the cutoff pitch.",
+          watch: "Watch prominent secondary ripples and resonant humps appear inside the waveform cycle."
         },
         {
           id: "modDepth",
@@ -82,7 +100,10 @@ const WAVECRAFT_DATA = {
           step: 1,
           defaultValue: 15,
           unit: "%",
-          tip: "Modulation (LFO): automatically wobbles the filter cutoff up and down for movement and vibrato."
+          guideTitle: "Filter • LFO Modulation Depth",
+          what: "Uses an invisible Low-Frequency Oscillator (LFO) to sweep the filter cutoff up and down automatically.",
+          listen: "Listen for a rhythmic 'wah-wah' wobble and sweeping harmonic movement across the note.",
+          watch: "Watch the wave's harmonic ripple density expand and compress across the length of the note."
         }
       ]
     },
@@ -96,9 +117,12 @@ const WAVECRAFT_DATA = {
           min: 0,
           max: 100,
           step: 1,
-          defaultValue: 10,
+          defaultValue: 12,
           unit: "%",
-          tip: "Drive (Saturation): adds warm analog crunch and harmonics by gently clipping the wave."
+          guideTitle: "Dynamics • Overdrive Saturation",
+          what: "Pushes the signal into hard analog-style clipping, adding rich harmonic grit and aggression.",
+          listen: "Listen for clean tones transforming into fuzzy, crunchy, distorted synth lead textures.",
+          watch: "Watch the rounded peaks of the wave visibly flatten and square off against the ceiling!"
         },
         {
           id: "compression",
@@ -108,43 +132,55 @@ const WAVECRAFT_DATA = {
           step: 1,
           defaultValue: 25,
           unit: "%",
-          tip: "Compression: tames loud volume spikes and glues sounds together so quiet details stand out."
+          guideTitle: "Dynamics • Audio Compression",
+          what: "Squashes loud volume peaks while boosting quieter body sections for a thick, consistent level.",
+          listen: "Listen for the quiet decay and sustain portions becoming noticeably fuller and louder.",
+          watch: "Watch the difference between the tallest peak and the quieter tail even out vertically."
         },
         {
           id: "gate",
           label: "Noise Gate",
           min: -80,
-          max: -10,
+          max: -6,
           step: 1,
-          defaultValue: -70,
+          defaultValue: -72,
           unit: "dB",
-          tip: "Noise Gate: silences quiet background hiss or reverb tails once volume drops below this dB threshold."
+          guideTitle: "Dynamics • Noise Gate Threshold",
+          what: "Acts like an automatic mute switch that clamps shut whenever the wave drops below the dB threshold.",
+          listen: "Raise the gate higher to hear quiet tails abruptly chop off into dead silence.",
+          watch: "Watch the tapering tail of the waveform suddenly snap flat to a straight zero line once it falls below the threshold."
         }
       ]
     },
     space: {
-      title: "Space & Time",
+      title: "Space & Time (Synth Only)",
       accent: "#10b981",
       knobs: [
         {
           id: "echo",
           label: "Echo",
           min: 0,
-          max: 85,
+          max: 90,
           step: 1,
           defaultValue: 20,
           unit: "%",
-          tip: "Echo (Feedback Delay): creates rhythmic repeating bounces of your sound."
+          guideTitle: "Space & Time • Synth Echo (Delay)",
+          what: "Creates rhythmic repeating copies of the synthesizer note (drums bypass this so beats stay tight).",
+          listen: "Listen for distinct, rhythmic bouncing repeats trailing behind your synth note.",
+          watch: "Watch ghost echo pulses appear spaced out along the tail of the synth waveform preview."
         },
         {
           id: "reverb",
           label: "Reverb",
           min: 0,
-          max: 90,
+          max: 95,
           step: 1,
           defaultValue: 25,
           unit: "%",
-          tip: "Reverb: simulates sound waves bouncing around a room or hall to add depth and space."
+          guideTitle: "Space & Time • Synth Hall Reverb",
+          what: "Simulates thousands of acoustic reflections inside a large hall exclusively for the synthesizer.",
+          listen: "Listen for a lush, atmospheric wash that surrounds the synth while keeping drums dry and punchy.",
+          watch: "Watch a dense, shimmering acoustic tail fill the space behind the main synth envelope."
         }
       ]
     }
@@ -160,9 +196,9 @@ const WAVECRAFT_DATA = {
         presetA: {
           label: "Punchy 808",
           wave: "sine",
-          startFreq: 130,
-          endFreq: 38,
-          decay: 0.28,
+          startFreq: 135,
+          endFreq: 36,
+          decay: 0.3,
           noiseMix: 0,
           volume: 0.85,
           lowCut: 30,
@@ -173,9 +209,9 @@ const WAVECRAFT_DATA = {
         presetB: {
           label: "Tight Club",
           wave: "triangle",
-          startFreq: 165,
-          endFreq: 48,
-          decay: 0.16,
+          startFreq: 170,
+          endFreq: 46,
+          decay: 0.17,
           noiseMix: 0.08,
           volume: 0.85,
           lowCut: 45,
@@ -196,7 +232,7 @@ const WAVECRAFT_DATA = {
           wave: "triangle",
           startFreq: 210,
           endFreq: 110,
-          decay: 0.18,
+          decay: 0.19,
           noiseMix: 0.65,
           volume: 0.75,
           lowCut: 110,
@@ -209,7 +245,7 @@ const WAVECRAFT_DATA = {
           wave: "sine",
           startFreq: 175,
           endFreq: 85,
-          decay: 0.24,
+          decay: 0.25,
           noiseMix: 0.45,
           volume: 0.75,
           lowCut: 90,
@@ -230,7 +266,7 @@ const WAVECRAFT_DATA = {
           wave: "square",
           startFreq: 950,
           endFreq: 400,
-          decay: 0.07,
+          decay: 0.08,
           noiseMix: 0.85,
           volume: 0.6,
           lowCut: 400,
@@ -243,7 +279,7 @@ const WAVECRAFT_DATA = {
           wave: "triangle",
           startFreq: 600,
           endFreq: 300,
-          decay: 0.11,
+          decay: 0.12,
           noiseMix: 0.9,
           volume: 0.6,
           lowCut: 650,
@@ -264,7 +300,7 @@ const WAVECRAFT_DATA = {
           wave: "sawtooth",
           startFreq: 340,
           endFreq: 160,
-          decay: 0.19,
+          decay: 0.2,
           noiseMix: 0.8,
           volume: 0.7,
           lowCut: 220,
@@ -303,11 +339,11 @@ const WAVECRAFT_DATA = {
         sustain: 0.55,
         release: 0.35,
         cutoff: 2400,
-        resonance: 2.5,
+        resonance: 3.0,
         modDepth: 12,
-        drive: 10,
+        drive: 12,
         compression: 25,
-        gate: -70,
+        gate: -72,
         echo: 18,
         reverb: 22
       },
@@ -330,9 +366,9 @@ const WAVECRAFT_DATA = {
         sustain: 0.45,
         release: 0.55,
         cutoff: 1150,
-        resonance: 3.8,
-        modDepth: 28,
-        drive: 24,
+        resonance: 5.5,
+        modDepth: 32,
+        drive: 28,
         compression: 45,
         gate: -62,
         echo: 32,
@@ -356,14 +392,14 @@ const WAVECRAFT_DATA = {
         decay: 0.18,
         sustain: 0.3,
         release: 0.22,
-        cutoff: 1650,
-        resonance: 10.5,
-        modDepth: 55,
-        drive: 42,
-        compression: 50,
-        gate: -55,
-        echo: 38,
-        reverb: 20
+        cutoff: 1500,
+        resonance: 16.5,
+        modDepth: 68,
+        drive: 55,
+        compression: 55,
+        gate: -50,
+        echo: 42,
+        reverb: 24
       },
       pattern: {
         kick:  [1,0,0,0, 1,0,0,1, 0,0,1,0, 1,0,0,0, 1,0,0,0, 1,0,0,1, 0,0,1,0, 1,0,1,0],
