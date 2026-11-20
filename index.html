@@ -187,11 +187,19 @@
             <div class="module-knobs" id="knobs-dynamics"></div>
           </div>
 
-          <!-- Module 6: Space & Time (Synth Only) -->
+          <!-- Module 6: Space & Time (Synth Only + Tempo Sync) -->
           <div class="rack-module module-teal" id="module-space">
             <div class="module-header">
               <span class="module-title">6. SPACE (SYNTH)</span>
-              <button type="button" class="bypass-btn active" data-module="space" data-tip="Bypass Echo and Reverb on the Synthesizer. Drums bypass this module so beats stay punchy.">ON</button>
+              <div class="module-header-actions">
+                <select id="delay-sync-select" class="module-mini-select" aria-label="Echo Tempo Sync" data-tip="Echo Delay Sync: lock repeats rhythmically to your BPM (1/8, Dotted 1/8, 1/4) or leave Free (280 ms).">
+                  <option value="free">FREE</option>
+                  <option value="1/8" selected>1/8</option>
+                  <option value="1/8d">1/8D</option>
+                  <option value="1/4">1/4</option>
+                </select>
+                <button type="button" class="bypass-btn active" data-module="space" data-tip="Bypass Echo and Reverb on the Synthesizer. Drums bypass this module so beats stay punchy.">ON</button>
+              </div>
             </div>
             <div class="module-knobs" id="knobs-space"></div>
           </div>
@@ -213,7 +221,7 @@
             <div class="sequencer-transport">
               <button id="play-btn" class="btn btn-primary" data-tip="Start or stop the drum loop and metronome (Shortcut: Spacebar).">START / STOP</button>
 
-              <label class="control-group" data-tip="Beats Per Minute: controls how fast the drum loop and metronome play.">
+              <label class="control-group" data-tip="Beats Per Minute: controls how fast the drum loop, metronome, and tempo-synced echo play.">
                 <span>TEMPO (BPM)</span>
                 <input type="number" id="bpm-input" value="120" min="60" max="200" />
               </label>

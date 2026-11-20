@@ -241,10 +241,10 @@ const WAVECRAFT_DATA = {
           step: 1,
           defaultValue: 20,
           unit: "%",
-          guideTitle: "Space & Time • Synth Echo (Delay)",
-          what: "Creates rhythmic repeating copies of the synthesizer note (drums bypass this so beats stay tight).",
-          listen: "Listen for distinct, rhythmic bouncing repeats trailing behind your synth note.",
-          watch: "Watch ghost echo pulses appear spaced out along the tail of the synth waveform preview."
+          guideTitle: "Space & Time • Synth Echo (Tempo-Synced Delay)",
+          what: "Creates repeating copies of the synthesizer note. Use the SYNC selector to lock repeats to 1/8, Dotted 1/8, or 1/4 notes at your current BPM.",
+          listen: "Listen for rhythmic bouncing repeats locking directly into the groove of your drum beat.",
+          watch: "Watch ghost echo pulses adjust spacing along the tail of the synth waveform preview."
         },
         {
           id: "reverb",
@@ -267,7 +267,6 @@ const WAVECRAFT_DATA = {
     {
       id: "kick",
       name: "Kick",
-      samplePath: "assets/samples/kick.wav",
       color: "#ea580c",
       soundPresets: {
         presetA: {
@@ -301,7 +300,6 @@ const WAVECRAFT_DATA = {
     {
       id: "snare",
       name: "Snare",
-      samplePath: "assets/samples/snare.wav",
       color: "#f59e0b",
       soundPresets: {
         presetA: {
@@ -335,7 +333,6 @@ const WAVECRAFT_DATA = {
     {
       id: "hihat",
       name: "Closed Hat",
-      samplePath: "assets/samples/hihat-closed.wav",
       color: "#2dd4bf",
       soundPresets: {
         presetA: {
@@ -369,7 +366,6 @@ const WAVECRAFT_DATA = {
     {
       id: "clap",
       name: "Clap",
-      samplePath: "assets/samples/clap.wav",
       color: "#ef4444",
       soundPresets: {
         presetA: {
@@ -408,6 +404,7 @@ const WAVECRAFT_DATA = {
       name: "Basic Four-on-the-Floor",
       bpm: 120,
       swing: 0,
+      delaySync: "1/8",
       waveform: "sawtooth",
       filterType: "lowpass",
       rackParams: {
@@ -440,6 +437,7 @@ const WAVECRAFT_DATA = {
       name: "Chill Boom-Bap",
       bpm: 92,
       swing: 25,
+      delaySync: "1/8d",
       waveform: "triangle",
       filterType: "lowpass",
       rackParams: {
@@ -472,6 +470,7 @@ const WAVECRAFT_DATA = {
       name: "Acid Electro Pulse",
       bpm: 132,
       swing: 10,
+      delaySync: "1/8d",
       waveform: "square",
       filterType: "lowpass",
       rackParams: {

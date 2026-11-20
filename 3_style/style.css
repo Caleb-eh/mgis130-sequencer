@@ -594,6 +594,18 @@ input[type="range"] {
   color: #f3e8ff;
 }
 
+.module-mini-select {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.62rem;
+  font-weight: 800;
+  padding: 0.14rem 0.28rem;
+  border-radius: 3px;
+  background: #0d1015;
+  color: var(--phosphor-teal);
+  border: 1px solid #2dd4bf66;
+  cursor: pointer;
+}
+
 .module-knobs {
   display: flex;
   flex-wrap: wrap;
@@ -622,7 +634,6 @@ input[type="range"] {
   width: 44px;
   height: 44px;
   border-radius: 50%;
-  /* Fluted outer skirt notches */
   background:
     repeating-conic-gradient(
       from 0deg,
