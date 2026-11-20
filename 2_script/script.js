@@ -7,6 +7,7 @@ let noiseBuffer = null;
 let reverbImpulseBuffer = null;
 let isPlaying = false;
 let metronomeEnabled = false;
+let learnModeOpen = true;
 
 // Lookahead Web Audio Scheduler state
 let currentScheduleStep = 0;
@@ -121,11 +122,29 @@ const drumKnobsContainer = document.getElementById("drum-knobs-container");
 const editorTrackBadge = document.getElementById("editor-track-badge");
 const editorTrackTitle = document.getElementById("editor-track-title");
 
-// Interactive Sound Design Guide DOM elements
+// Interactive Sound Design Guide & Dropdown Drawer DOM elements
+const learnToggleBtn = document.getElementById("learn-toggle-btn");
+const learnToggleText = document.getElementById("learn-toggle-text");
+const learnCloseBtn = document.getElementById("learn-close-btn");
+const learnDrawer = document.getElementById("learn-drawer");
 const learnTitle = document.getElementById("learn-title");
 const learnWhat = document.getElementById("learn-what");
 const learnListen = document.getElementById("learn-listen");
 const learnWatch = document.getElementById("learn-watch");
+
+function setLearnModeOpen(open) {
+  learnModeOpen = Boolean(open);
+  if (learnDrawer) {
+    learnDrawer.classList.toggle("is-collapsed", !learnModeOpen);
+  }
+  if (learnToggleBtn) {
+    learnToggleBtn.classList.toggle("active", learnModeOpen);
+    learnToggleBtn.setAttribute("aria-expanded", String(learnModeOpen));
+  }
+  if (learnToggleText) {
+    learnToggleText.textContent = learnModeOpen ? "LEARN MODE: ON" : "LEARN MODE: OFF";
+  }
+}
 
 // Update the 3-part Interactive Sound Design Guide
 function updateSoundDesignGuide({ title, what, listen, watch }) {
@@ -1792,6 +1811,17 @@ function setupTooltips() {
 function startApp() {
   initRackDefaults();
   initDrumSettings();
+
+  if (learnToggleBtn) {
+    learnToggleBtn.addEventListener("click", () => {
+      setLearnModeOpen(!learnModeOpen);
+    });
+  }
+  if (learnCloseBtn) {
+    learnCloseBtn.addEventListener("click", () => {
+      setLearnModeOpen(false);
+    });
+  }
 
   const synthCanvas = document.getElementById("scope-synth");
   if (synthCanvas) registerChannelCanvas("synth", synthCanvas, "#2dd4bf");
