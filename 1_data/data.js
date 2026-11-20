@@ -1,9 +1,41 @@
 // 1_data/data.js
-// DATA LAYER: Holds exaggerated educational DSP ranges, 3-part Sound Design Guide insights, drum presets, and patterns.
+// DATA LAYER: Holds exaggerated educational DSP ranges, 3-part Sound Design Guide insights, drum presets, and factory patterns.
 
 const WAVECRAFT_DATA = {
   // Modular Rack Knob Definitions with rich 3-part educational breakdowns (what, listen, watch)
   rackModules: {
+    tuning: {
+      title: "Oscillator Tuning",
+      accent: "#f5efe6",
+      knobs: [
+        {
+          id: "pitch",
+          label: "Pitch",
+          min: -24,
+          max: 24,
+          step: 1,
+          defaultValue: 0,
+          unit: "st",
+          guideTitle: "Oscillator • Coarse Pitch Shift",
+          what: "Shifts the oscillator frequency smoothly across a wide 4-octave range (-24 to +24 semitones).",
+          listen: "Turn down for sub-shaking basslines or sweep upward for screaming analog lead tones.",
+          watch: "Watch the wave cycles pack tightly together (higher pitch) or stretch apart (lower pitch)."
+        },
+        {
+          id: "detune",
+          label: "Detune",
+          min: -100,
+          max: 100,
+          step: 1,
+          defaultValue: 0,
+          unit: "ct",
+          guideTitle: "Oscillator • Fine Detune & Twin Chorus",
+          what: "Fine-tunes pitch in cents (-100 to +100 ct) and layers a slightly detuned twin oscillator for classic analog chorus.",
+          listen: "Turn away from 0 ct to hear two oscillators beating against each other in a thick, swirling unison.",
+          watch: "Watch phase interference ripples shimmer across the waveform as the twin oscillators drift."
+        }
+      ]
+    },
     adsr: {
       title: "ADSR Envelope",
       accent: "#38bdf8",
@@ -77,7 +109,7 @@ const WAVECRAFT_DATA = {
           guideTitle: "Filter • Cutoff Frequency",
           what: "Sets the frequency border where the filter removes high frequencies (LP) or low bass (HP).",
           listen: "Turning Low-Pass down makes bright waves sound warm, muffled, and underwater.",
-          watch: "Watch sharp sawtooth/square edges smooth out into rounder, softer curves as highs are trimmed."
+          watch: "Watch sharp sawtooth/square edges smooth out into rounder curves and the EQ curve roll off."
         },
         {
           id: "resonance",
@@ -90,7 +122,7 @@ const WAVECRAFT_DATA = {
           guideTitle: "Filter • Resonance (Q Peak)",
           what: "Dramatically boosts a narrow band of frequencies right at the Cutoff frequency.",
           listen: "Listen for an unmistakable, sharp whistling or vocal 'oww' peak ringing at the cutoff pitch.",
-          watch: "Watch prominent secondary ripples and resonant humps appear inside the waveform cycle."
+          watch: "Watch a sharp resonant spike appear on the Live EQ graph right at the cutoff frequency."
         },
         {
           id: "modDepth",
@@ -104,6 +136,51 @@ const WAVECRAFT_DATA = {
           what: "Uses an invisible Low-Frequency Oscillator (LFO) to sweep the filter cutoff up and down automatically.",
           listen: "Listen for a rhythmic 'wah-wah' wobble and sweeping harmonic movement across the note.",
           watch: "Watch the wave's harmonic ripple density expand and compress across the length of the note."
+        }
+      ]
+    },
+    eq: {
+      title: "3-Band Equalizer",
+      accent: "#ea580c",
+      knobs: [
+        {
+          id: "eqBass",
+          label: "Bass",
+          min: -15,
+          max: 15,
+          step: 0.5,
+          defaultValue: 0,
+          unit: "dB",
+          guideTitle: "3-Band EQ • Bass Low-Shelf (120 Hz)",
+          what: "Boosts or cuts deep sub-bass and warmth frequencies below 120 Hz using a Low-Shelf filter.",
+          listen: "Turn clockwise for heavy, chest-thumping low end; turn counter-clockwise to tighten muddy bass.",
+          watch: "Watch the left side of the Live EQ Frequency Curve lift above or dip below the 0 dB center line."
+        },
+        {
+          id: "eqMid",
+          label: "Mid",
+          min: -15,
+          max: 15,
+          step: 0.5,
+          defaultValue: 0,
+          unit: "dB",
+          guideTitle: "3-Band EQ • Mid Peaking (1,000 Hz)",
+          what: "Boosts or scoops midrange presence centered at 1 kHz where synth leads and snare punch live.",
+          listen: "Boost for aggressive vocal presence; cut to create a scooped, modern hi-fi studio curve.",
+          watch: "Watch the bell-shaped curve rise or dip around the 1 kHz center marker on the EQ screen."
+        },
+        {
+          id: "eqTreble",
+          label: "Treble",
+          min: -15,
+          max: 15,
+          step: 0.5,
+          defaultValue: 0,
+          unit: "dB",
+          guideTitle: "3-Band EQ • Treble High-Shelf (4.5 kHz)",
+          what: "Boosts or attenuates crisp high frequencies above 4,500 Hz using a High-Shelf filter.",
+          listen: "Turn up for bright hi-hat sizzle and synth air; turn down for warm, vintage analog tape roll-off.",
+          watch: "Watch the right side of the Live EQ Frequency Curve rise toward 10 kHz or slope downward."
         }
       ]
     },
@@ -148,7 +225,7 @@ const WAVECRAFT_DATA = {
           guideTitle: "Dynamics • Noise Gate Threshold",
           what: "Acts like an automatic mute switch that clamps shut whenever the wave drops below the dB threshold.",
           listen: "Raise the gate higher to hear quiet tails abruptly chop off into dead silence.",
-          watch: "Watch the tapering tail of the waveform suddenly snap flat to a straight zero line once it falls below the threshold."
+          watch: "Watch the tapering tail of the waveform suddenly snap flat to a straight zero line once it falls below threshold."
         }
       ]
     },
@@ -191,7 +268,7 @@ const WAVECRAFT_DATA = {
       id: "kick",
       name: "Kick",
       samplePath: "assets/samples/kick.wav",
-      color: "#ff5e5b",
+      color: "#ea580c",
       soundPresets: {
         presetA: {
           label: "Punchy 808",
@@ -207,7 +284,7 @@ const WAVECRAFT_DATA = {
           attack: 0.005
         },
         presetB: {
-          label: "Tight Club",
+          label: "Tight 909",
           wave: "triangle",
           startFreq: 170,
           endFreq: 46,
@@ -225,7 +302,7 @@ const WAVECRAFT_DATA = {
       id: "snare",
       name: "Snare",
       samplePath: "assets/samples/snare.wav",
-      color: "#ffbe0b",
+      color: "#f59e0b",
       soundPresets: {
         presetA: {
           label: "Crisp Studio",
@@ -259,7 +336,7 @@ const WAVECRAFT_DATA = {
       id: "hihat",
       name: "Closed Hat",
       samplePath: "assets/samples/hihat-closed.wav",
-      color: "#00bbf9",
+      color: "#2dd4bf",
       soundPresets: {
         presetA: {
           label: "Sharp Tick",
@@ -293,7 +370,7 @@ const WAVECRAFT_DATA = {
       id: "clap",
       name: "Clap",
       samplePath: "assets/samples/clap.wav",
-      color: "#9b5de5",
+      color: "#ef4444",
       soundPresets: {
         presetA: {
           label: "Classic Snap",
@@ -325,7 +402,7 @@ const WAVECRAFT_DATA = {
     }
   ],
 
-  // 32-step patterns + full modular rack parameter snapshots
+  // 32-step factory patterns + full modular rack parameter snapshots
   presets: {
     basicRock: {
       name: "Basic Four-on-the-Floor",
@@ -334,6 +411,8 @@ const WAVECRAFT_DATA = {
       waveform: "sawtooth",
       filterType: "lowpass",
       rackParams: {
+        pitch: 0,
+        detune: 8,
         attack: 0.02,
         decay: 0.25,
         sustain: 0.55,
@@ -341,6 +420,9 @@ const WAVECRAFT_DATA = {
         cutoff: 2400,
         resonance: 3.0,
         modDepth: 12,
+        eqBass: 2.0,
+        eqMid: 0.0,
+        eqTreble: 1.5,
         drive: 12,
         compression: 25,
         gate: -72,
@@ -361,6 +443,8 @@ const WAVECRAFT_DATA = {
       waveform: "triangle",
       filterType: "lowpass",
       rackParams: {
+        pitch: -12,
+        detune: 14,
         attack: 0.04,
         decay: 0.35,
         sustain: 0.45,
@@ -368,6 +452,9 @@ const WAVECRAFT_DATA = {
         cutoff: 1150,
         resonance: 5.5,
         modDepth: 32,
+        eqBass: 4.5,
+        eqMid: -2.0,
+        eqTreble: -1.5,
         drive: 28,
         compression: 45,
         gate: -62,
@@ -388,6 +475,8 @@ const WAVECRAFT_DATA = {
       waveform: "square",
       filterType: "lowpass",
       rackParams: {
+        pitch: 0,
+        detune: 22,
         attack: 0.01,
         decay: 0.18,
         sustain: 0.3,
@@ -395,6 +484,9 @@ const WAVECRAFT_DATA = {
         cutoff: 1500,
         resonance: 16.5,
         modDepth: 68,
+        eqBass: 3.0,
+        eqMid: 2.5,
+        eqTreble: 4.0,
         drive: 55,
         compression: 55,
         gate: -50,
