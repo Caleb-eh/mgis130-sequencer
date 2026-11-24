@@ -334,6 +334,11 @@ body {
   border-radius: 3px;
 }
 
+.badge-rec {
+  background: var(--vintage-red);
+  color: #fffbeb;
+}
+
 .learn-guide-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
@@ -426,6 +431,7 @@ body {
 }
 
 input[type="number"],
+input[type="text"],
 select {
   background: #0d1015;
   color: var(--phosphor-teal);
@@ -440,6 +446,16 @@ select {
 
 input[type="number"] {
   width: 72px;
+}
+
+.hardware-text-input {
+  width: 155px;
+  color: var(--text-cream);
+}
+
+.hardware-text-input::placeholder {
+  color: #64748b;
+  font-weight: 500;
 }
 
 input[type="range"] {
@@ -459,16 +475,21 @@ input[type="range"] {
   cursor: pointer;
   font-size: 0.76rem;
   box-shadow: 0 3px 0 #090b0e, 0 4px 8px rgba(0, 0, 0, 0.5);
-  transition: transform 0.06s ease, box-shadow 0.06s ease, filter 0.15s ease;
+  transition: transform 0.06s ease, box-shadow 0.06s ease, filter 0.15s ease, opacity 0.15s ease;
 }
 
-.btn:active {
+.btn:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.btn:not(:disabled):active {
   transform: translateY(2px);
   box-shadow: 0 1px 0 #090b0e, 0 2px 4px rgba(0, 0, 0, 0.5);
 }
 
 .btn-sm {
-  padding: 0.32rem 0.65rem;
+  padding: 0.36rem 0.65rem;
   font-size: 0.7rem;
 }
 
@@ -481,6 +502,16 @@ input[type="range"] {
   background: linear-gradient(180deg, #22c55e, #15803d);
   color: #052e16;
   box-shadow: 0 3px 0 #090b0e, 0 0 14px rgba(34, 197, 94, 0.55);
+}
+
+.btn-rec {
+  background: linear-gradient(180deg, #dc2626, #991b1b);
+  color: #fffbeb;
+}
+
+.btn-rec.is-recording {
+  background: linear-gradient(180deg, #ef4444, #b91c1c);
+  box-shadow: 0 3px 0 #090b0e, 0 0 16px rgba(239, 68, 68, 0.75);
 }
 
 .btn-amber {
@@ -518,8 +549,8 @@ input[type="range"] {
   justify-content: space-between;
   align-items: center;
   gap: 1rem;
-  margin-bottom: 1.15rem;
-  padding-bottom: 1rem;
+  margin-bottom: 0.95rem;
+  padding-bottom: 0.95rem;
   border-bottom: 1px solid #323743;
 }
 
@@ -532,6 +563,46 @@ input[type="range"] {
 .scope-hint {
   font-size: 0.76rem;
   color: var(--text-muted);
+}
+
+/* Mic Sampler & Library Strip */
+.sampler-strip {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 0.85rem;
+  background: #14171f;
+  border: 1px solid #343946;
+  border-left: 3px solid var(--vintage-red);
+  border-radius: 6px;
+  padding: 0.7rem 0.9rem;
+  margin-bottom: 1rem;
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.55);
+}
+
+.sampler-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.65rem;
+}
+
+.sampler-group > .badge {
+  align-self: center;
+}
+
+.rec-status-text {
+  align-self: center;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  color: var(--phosphor-teal);
+  max-width: 240px;
+}
+
+.rec-status-text.recording {
+  color: #fca5a5;
+  font-weight: 700;
 }
 
 /* Unified Recessed Dual-Screen Bezel */

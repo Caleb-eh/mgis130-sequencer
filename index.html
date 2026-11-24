@@ -90,7 +90,7 @@
     </header>
 
     <main class="workspace">
-      <!-- Top Section: Wave Synthesizer + Dual Phosphor Display Bezel + Modular Effects Rack -->
+      <!-- Top Section: Wave Synthesizer + Dual Phosphor Display Bezel + Mic Sampler + Modular Effects Rack -->
       <section class="panel synth-rack-panel hardware-panel">
         <span class="screw tl" aria-hidden="true"></span>
         <span class="screw tr" aria-hidden="true"></span>
@@ -103,8 +103,8 @@
             <span class="scope-hint">Keys A–K play a C-Major scale • Double-click any knob to reset</span>
 
             <div class="synth-quick-controls">
-              <label class="control-group" data-tip="Selects the basic shape of the sound wave. Sine is smooth; Sawtooth and Square are bright and buzzy.">
-                <span>OSCILLATOR WAVE</span>
+              <label class="control-group" data-tip="Selects the basic shape of the sound wave or any recorded mic sample from your library.">
+                <span>OSCILLATOR / SAMPLE</span>
                 <select id="wave-select">
                   <option value="sine">Sine (Smooth)</option>
                   <option value="triangle">Triangle (Warm)</option>
@@ -113,7 +113,7 @@
                 </select>
               </label>
 
-              <label class="control-group" data-tip="Selects the base musical note for the synthesizer test button.">
+              <label class="control-group" data-tip="Selects the base musical note (or pitch shift for recorded samples) for the synthesizer test button.">
                 <span>BASE NOTE</span>
                 <select id="note-select">
                   <option value="130.81">C3 (Low Bass)</option>
@@ -126,7 +126,7 @@
                 </select>
               </label>
 
-              <button id="test-synth-btn" class="btn btn-amber" data-tip="Play a synthesizer note through all modular effect units below (or press keys A–K).">
+              <button id="test-synth-btn" class="btn btn-amber" data-tip="Play a synthesizer note or active mic sample through all modular effect units below (or press keys A–K).">
                 TRIG SYNTH NOTE
               </button>
             </div>
@@ -151,6 +151,55 @@
               </div>
               <canvas id="eq-visualizer" class="phosphor-canvas" width="250" height="72"></canvas>
             </div>
+          </div>
+        </div>
+
+        <!-- Mic Sampler & Built-In Sample Library Strip -->
+        <div class="sampler-strip" id="sampler-strip">
+          <div class="sampler-group">
+            <span class="badge badge-rec">MIC SAMPLER</span>
+
+            <label class="control-group" data-tip="Choose how long the microphone will capture audio when you press REC MIC.">
+              <span>LENGTH</span>
+              <select id="rec-length-select">
+                <option value="1">1.0 sec</option>
+                <option value="2" selected>2.0 sec</option>
+                <option value="3">3.0 sec</option>
+                <option value="5">5.0 sec</option>
+              </select>
+            </label>
+
+            <button type="button" id="rec-mic-btn" class="btn btn-rec" data-tip="Capture audio from your device microphone for the chosen length, then sculpt it with all synth and drum knobs.">
+              ● REC MIC
+            </button>
+
+            <button type="button" id="preview-rec-btn" class="btn btn-secondary btn-sm" disabled data-tip="Audition your recorded or selected sample through the 6-module synth rack.">
+              PREVIEW
+            </button>
+
+            <span id="rec-status-text" class="rec-status-text">Ready to capture mic audio</span>
+          </div>
+
+          <div class="sampler-group sampler-save-group">
+            <label class="control-group" data-tip="Name your recording before saving it to the permanent browser library.">
+              <span>SAMPLE NAME</span>
+              <input type="text" id="sample-name-input" class="hardware-text-input" maxlength="24" placeholder="e.g. Vocal Chop" />
+            </label>
+
+            <button type="button" id="save-sample-btn" class="btn btn-amber btn-sm" disabled data-tip="Save this recording to your built-in library so you can reuse and reshape it anytime.">
+              SAVE TO LIBRARY
+            </button>
+
+            <label class="control-group" data-tip="Pick any saved recording to load it into the Wave Synthesizer (and make it available on every Drum Track).">
+              <span>SAVED LIBRARY (<span id="library-count">0</span>)</span>
+              <select id="sample-library-select">
+                <option value="">-- No Saved Samples --</option>
+              </select>
+            </label>
+
+            <button type="button" id="delete-sample-btn" class="btn btn-ghost btn-sm" disabled title="Delete selected sample from library">
+              DEL
+            </button>
           </div>
         </div>
 
