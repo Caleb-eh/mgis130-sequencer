@@ -1,6 +1,7 @@
 // 2_script/script.js
 // PROCESSING & PRESENTATION: Lookahead scheduler, dry metronome, Pitch/Detune twin oscillator,
-// 3-Band EQ BiquadFilterNode chain, Live EQ Frequency Response + Spectrum Visualizer, and static wave previews.
+// Mic Sampler & localStorage Sample Library, 3-Band EQ BiquadFilterNode chain,
+// Live EQ Frequency Response + Spectrum Visualizer, and static wave previews.
 
 let audioCtx = null;
 let noiseBuffer = null;
@@ -59,6 +60,22 @@ for (let i = 0; i < EQ_GRAPH_POINTS; i++) {
   const norm = i / (EQ_GRAPH_POINTS - 1);
   eqFreqArray[i] = 20 * Math.pow(1000, norm); // 20 Hz -> 20,000 Hz
 }
+
+// ============================================================================
+// MIC SAMPLER & LOCALSTORAGE LIBRARY STATE
+// ============================================================================
+
+const SAMPLE_STORAGE_KEY = "wavecraft_wc808_sample_library_v1";
+const SAMPLE_EXPORT_RATE = 22050; // Compact mono 22.05 kHz 16-bit WAV (~88 KB per 2s) for fast localStorage saves
+
+let savedSamples = []; // Array of { id, name, duration, wavDataUrl, peaks }
+const decodedSampleBuffers = {}; // Cache: { [sampleId]: AudioBuffer }
+let pendingRecording = null; // Unsaved recording: { floatData, sampleRate, duration, peaks, tempBuffer }
+let isRecordingMic = false;
+let activeMicStream = null;
+let activeMicSource = null;
+let activeMicProcessor = null;
+let recCountdownTimer = null;
 
 // Sequencer & Drum Settings State
 let stepCount = 16;
@@ -122,6 +139,17 @@ const drumKnobsContainer = document.getElementById("drum-knobs-container");
 const editorTrackBadge = document.getElementById("editor-track-badge");
 const editorTrackTitle = document.getElementById("editor-track-title");
 
+// Mic Sampler & Library DOM References
+const recLengthSelect = document.getElementById("rec-length-select");
+const recMicBtn = document.getElementById("rec-mic-btn");
+const previewRecBtn = document.getElementById("preview-rec-btn");
+const recStatusText = document.getElementById("rec-status-text");
+const sampleNameInput = document.getElementById("sample-name-input");
+const saveSampleBtn = document.getElementById("save-sample-btn");
+const libraryCountEl = document.getElementById("library-count");
+const sampleLibrarySelect = document.getElementById("sample-library-select");
+const deleteSampleBtn = document.getElementById("delete-sample-btn");
+
 // Interactive Sound Design Guide & Dropdown Drawer DOM elements
 const learnToggleBtn = document.getElementById("learn-toggle-btn");
 const learnToggleText = document.getElementById("learn-toggle-text");
@@ -154,7 +182,489 @@ function updateSoundDesignGuide({ title, what, listen, watch }) {
   if (learnWatch && watch) watch.textContent = watch;
 }
 
-// Populate default rack parameter values from data.js
+// ============================================================================
+// WAV ENCODING, DECODING & LOCALSTORAGE PERSISTENCE
+// ============================================================================
+
+function computeNormalizedPeaks(floatData, bucketCount = 180) {
+  const peaks = new Array(bucketCount).fill(0);
+  if (!floatData || floatData.length === 0) return peaks;
+
+  // Normalize peak amplitude so quiet mic recordings display clearly
+  let maxAbs = 0.01;
+  for (let i = 0; i < floatData.length; i++) {
+    const a = Math.abs(floatData[i]);
+    if (a > maxAbs) maxAbs = a;
+  }
+
+  const blockSize = Math.max(1, Math.floor(floatData.length / bucketCount));
+  for (let b = 0; b < bucketCount; b++) {
+    const start = b * blockSize;
+    const end = Math.min(floatData.length, start + blockSize);
+    let signedPeak = 0;
+    let bestMag = 0;
+    for (let i = start; i < end; i++) {
+      const val = floatData[i] / maxAbs;
+      const mag = Math.abs(val);
+      if (mag > bestMag) {
+        bestMag = mag;
+        signedPeak = val;
+      }
+    }
+    peaks[b] = Number(signedPeak.toFixed(3));
+  }
+  return peaks;
+}
+
+function downsampleMonoFloat32(floatData, inputRate, targetRate) {
+  if (inputRate <= targetRate) return floatData;
+  const ratio = inputRate / targetRate;
+  const newLength = Math.max(1, Math.round(floatData.length / ratio));
+  const result = new Float32Array(newLength);
+  for (let i = 0; i < newLength; i++) {
+    const idx = Math.min(floatData.length - 1, Math.floor(i * ratio));
+    result[i] = floatData[idx];
+  }
+  return result;
+}
+
+function encodeMonoWavDataUrl(floatData, sampleRate) {
+  const numSamples = floatData.length;
+  const dataBytes = numSamples * 2;
+  const buffer = new ArrayBuffer(44 + dataBytes);
+  const view = new DataView(buffer);
+
+  function writeAscii(offset, str) {
+    for (let i = 0; i < str.length; i++) {
+      view.setUint8(offset + i, str.charCodeAt(i));
+    }
+  }
+
+  writeAscii(0, "RIFF");
+  view.setUint32(4, 36 + dataBytes, true);
+  writeAscii(8, "WAVE");
+  writeAscii(12, "fmt ");
+  view.setUint32(16, 16, true); // PCM chunk size
+  view.setUint16(20, 1, true); // PCM format
+  view.setUint16(22, 1, true); // Mono (1 channel)
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true); // Byte rate
+  view.setUint16(32, 2, true); // Block align
+  view.setUint16(34, 16, true); // 16-bit
+  writeAscii(36, "data");
+  view.setUint32(40, dataBytes, true);
+
+  let offset = 44;
+  for (let i = 0; i < numSamples; i++) {
+    const s = Math.max(-1, Math.min(1, floatData[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    offset += 2;
+  }
+
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+  }
+  return "data:audio/wav;base64," + btoa(binary);
+}
+
+function dataUrlToArrayBuffer(dataUrl) {
+  const base64 = dataUrl.split(",")[1] || "";
+  const binary = atob(base64);
+  const len = binary.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
+async function decodeSampleToAudioBuffer(sampleObj) {
+  if (!sampleObj) return null;
+  if (decodedSampleBuffers[sampleObj.id]) {
+    return decodedSampleBuffers[sampleObj.id];
+  }
+  initAudio();
+  try {
+    const arrayBuf = dataUrlToArrayBuffer(sampleObj.wavDataUrl);
+    const audioBuf = await audioCtx.decodeAudioData(arrayBuf);
+    decodedSampleBuffers[sampleObj.id] = audioBuf;
+    return audioBuf;
+  } catch (err) {
+    console.error("Failed to decode saved sample:", err);
+    return null;
+  }
+}
+
+function loadSavedSamplesFromStorage() {
+  try {
+    const raw = localStorage.getItem(SAMPLE_STORAGE_KEY);
+    if (!raw) {
+      savedSamples = [];
+      return;
+    }
+    const parsed = JSON.parse(raw);
+    savedSamples = Array.isArray(parsed) ? parsed : [];
+  } catch (err) {
+    console.warn("Could not read saved samples from localStorage:", err);
+    savedSamples = [];
+  }
+}
+
+function persistSavedSamplesToStorage() {
+  try {
+    localStorage.setItem(SAMPLE_STORAGE_KEY, JSON.stringify(savedSamples));
+    return true;
+  } catch (err) {
+    console.error("localStorage quota exceeded:", err);
+    if (recStatusText) {
+      recStatusText.textContent = "Storage full! Delete an older sample first.";
+    }
+    return false;
+  }
+}
+
+function getSampleById(sampleId) {
+  if (sampleId === "unsaved" && pendingRecording) {
+    return {
+      id: "unsaved",
+      name: "Unsaved Mic Take",
+      duration: pendingRecording.duration,
+      peaks: pendingRecording.peaks,
+      audioBuffer: pendingRecording.tempBuffer
+    };
+  }
+  const cleanId = sampleId.startsWith("sample:") ? sampleId.slice(7) : sampleId;
+  return savedSamples.find((s) => s.id === cleanId) || null;
+}
+
+function syncSampleDropdowns() {
+  // 1. Update Top Saved Library Dropdown
+  if (sampleLibrarySelect) {
+    const prevLibVal = sampleLibrarySelect.value;
+    sampleLibrarySelect.innerHTML = "";
+
+    if (savedSamples.length === 0) {
+      const emptyOpt = document.createElement("option");
+      emptyOpt.value = "";
+      emptyOpt.textContent = "-- No Saved Samples --";
+      sampleLibrarySelect.appendChild(emptyOpt);
+    } else {
+      const promptOpt = document.createElement("option");
+      promptOpt.value = "";
+      promptOpt.textContent = "-- Select Saved Sample --";
+      sampleLibrarySelect.appendChild(promptOpt);
+
+      savedSamples.forEach((s) => {
+        const opt = document.createElement("option");
+        opt.value = s.id;
+        opt.textContent = `${s.name} (${s.duration.toFixed(1)}s)`;
+        sampleLibrarySelect.appendChild(opt);
+      });
+    }
+
+    if (prevLibVal && savedSamples.some((s) => s.id === prevLibVal)) {
+      sampleLibrarySelect.value = prevLibVal;
+    }
+  }
+
+  if (libraryCountEl) {
+    libraryCountEl.textContent = String(savedSamples.length);
+  }
+  if (deleteSampleBtn && sampleLibrarySelect) {
+    deleteSampleBtn.disabled = !sampleLibrarySelect.value;
+  }
+
+  // 2. Update Wave Synthesizer "OSCILLATOR / SAMPLE" Dropdown
+  if (waveSelect) {
+    const prevWaveVal = waveSelect.value;
+    waveSelect.innerHTML = `
+      <optgroup label="ANALOG OSCILLATORS">
+        <option value="sine">Sine (Smooth)</option>
+        <option value="triangle">Triangle (Warm)</option>
+        <option value="sawtooth">Sawtooth (Bright)</option>
+        <option value="square">Square (Hollow)</option>
+      </optgroup>
+    `;
+
+    if (pendingRecording || savedSamples.length > 0) {
+      const sampleGroup = document.createElement("optgroup");
+      sampleGroup.label = "MIC SAMPLES";
+
+      if (pendingRecording) {
+        const unsavedOpt = document.createElement("option");
+        unsavedOpt.value = "sample:unsaved";
+        unsavedOpt.textContent = `● Unsaved Take (${pendingRecording.duration.toFixed(1)}s)`;
+        sampleGroup.appendChild(unsavedOpt);
+      }
+
+      savedSamples.forEach((s) => {
+        const opt = document.createElement("option");
+        opt.value = `sample:${s.id}`;
+        opt.textContent = `🎤 ${s.name} (${s.duration.toFixed(1)}s)`;
+        sampleGroup.appendChild(opt);
+      });
+
+      waveSelect.appendChild(sampleGroup);
+    }
+
+    const stillExists = Array.from(waveSelect.options).some((o) => o.value === prevWaveVal);
+    waveSelect.value = stillExists ? prevWaveVal : "sawtooth";
+  }
+
+  // 3. Refresh Drum Sequencer Track Dropdowns so saved samples appear on every drum voice
+  if (sequencerGrid && Object.keys(gridState).length > 0) {
+    renderGrid();
+  }
+}
+
+async function startMicRecording() {
+  if (isRecordingMic) return;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    if (recStatusText) {
+      recStatusText.textContent = "Mic unavailable (requires HTTPS or localhost).";
+    }
+    return;
+  }
+
+  initAudio();
+  const durationSec = Math.max(1, Math.min(5, Number(recLengthSelect ? recLengthSelect.value : 2) || 2));
+
+  try {
+    activeMicStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false
+      }
+    });
+  } catch (err) {
+    if (recStatusText) {
+      recStatusText.textContent = "Mic permission denied or no microphone found.";
+    }
+    return;
+  }
+
+  isRecordingMic = true;
+  if (recMicBtn) {
+    recMicBtn.classList.add("is-recording");
+    recMicBtn.textContent = "■ RECORDING...";
+  }
+  if (previewRecBtn) previewRecBtn.disabled = true;
+  if (saveSampleBtn) saveSampleBtn.disabled = true;
+
+  const sampleRate = audioCtx.sampleRate;
+  const maxSamples = Math.floor(sampleRate * durationSec);
+  const recordedChunks = [];
+  let collectedSamples = 0;
+
+  activeMicSource = audioCtx.createMediaStreamSource(activeMicStream);
+  activeMicProcessor = audioCtx.createScriptProcessor(4096, 1, 1);
+
+  const silentSink = audioCtx.createGain();
+  silentSink.gain.value = 0;
+
+  function finishRecording() {
+    if (!isRecordingMic) return;
+    isRecordingMic = false;
+    clearInterval(recCountdownTimer);
+
+    if (activeMicProcessor) {
+      activeMicProcessor.disconnect();
+      activeMicProcessor.onaudioprocess = null;
+      activeMicProcessor = null;
+    }
+    if (activeMicSource) {
+      activeMicSource.disconnect();
+      activeMicSource = null;
+    }
+    silentSink.disconnect();
+    if (activeMicStream) {
+      activeMicStream.getTracks().forEach((t) => t.stop());
+      activeMicStream = null;
+    }
+
+    if (recMicBtn) {
+      recMicBtn.classList.remove("is-recording");
+      recMicBtn.textContent = "● REC MIC";
+    }
+
+    const totalLen = Math.min(maxSamples, collectedSamples);
+    if (totalLen < 256) {
+      if (recStatusText) recStatusText.textContent = "No audio captured. Try again.";
+      return;
+    }
+
+    const merged = new Float32Array(totalLen);
+    let writePos = 0;
+    for (let c = 0; c < recordedChunks.length && writePos < totalLen; c++) {
+      const chunk = recordedChunks[c];
+      const copyLen = Math.min(chunk.length, totalLen - writePos);
+      merged.set(chunk.subarray(0, copyLen), writePos);
+      writePos += copyLen;
+    }
+
+    // Normalize recorded audio so even soft voice/instrument takes are loud & clear
+    let peak = 0.01;
+    for (let i = 0; i < merged.length; i++) {
+      const a = Math.abs(merged[i]);
+      if (a > peak) peak = a;
+    }
+    const normGain = Math.min(6.0, 0.92 / peak);
+    for (let i = 0; i < merged.length; i++) {
+      merged[i] = Math.max(-1, Math.min(1, merged[i] * normGain));
+    }
+
+    const tempBuffer = audioCtx.createBuffer(1, merged.length, sampleRate);
+    tempBuffer.getChannelData(0).set(merged);
+
+    const peaks = computeNormalizedPeaks(merged, 180);
+    pendingRecording = {
+      floatData: merged,
+      sampleRate: sampleRate,
+      duration: merged.length / sampleRate,
+      peaks: peaks,
+      tempBuffer: tempBuffer
+    };
+
+    syncSampleDropdowns();
+    if (waveSelect) {
+      waveSelect.value = "sample:unsaved";
+    }
+    recalculateStaticWaveform("synth");
+
+    if (previewRecBtn) previewRecBtn.disabled = false;
+    if (saveSampleBtn) saveSampleBtn.disabled = false;
+    if (sampleNameInput && !sampleNameInput.value.trim()) {
+      sampleNameInput.value = `Sample ${savedSamples.length + 1}`;
+    }
+    if (recStatusText) {
+      recStatusText.textContent = `Captured ${pendingRecording.duration.toFixed(1)}s! Loaded into Synth — turn knobs or Save.`;
+    }
+
+    updateSoundDesignGuide({
+      title: "Mic Sampler • Recording Loaded into Synth",
+      what: "Your live microphone recording is now loaded as the active sound source for the Wave Synthesizer.",
+      listen: "Press TRIG SYNTH NOTE (or keys A–K) and twist Cutoff, Drive, Pitch, or Echo to transform your voice!",
+      watch: "Watch your captured audio waveform reshape live on the OSC Waveform screen as you turn the knobs."
+    });
+
+    playSynthNote(parseFloat(noteSelect.value) || 220);
+  }
+
+  activeMicProcessor.onaudioprocess = (e) => {
+    if (!isRecordingMic) return;
+    const input = e.inputBuffer.getChannelData(0);
+    const copy = new Float32Array(input.length);
+    copy.set(input);
+    recordedChunks.push(copy);
+    collectedSamples += copy.length;
+    if (collectedSamples >= maxSamples) {
+      finishRecording();
+    }
+  };
+
+  activeMicSource.connect(activeMicProcessor);
+  activeMicProcessor.connect(silentSink);
+  silentSink.connect(audioCtx.destination);
+
+  let remaining = durationSec;
+  if (recStatusText) {
+    recStatusText.textContent = `Recording... ${remaining.toFixed(1)}s left`;
+  }
+  recCountdownTimer = setInterval(() => {
+    remaining = Math.max(0, remaining - 0.1);
+    if (isRecordingMic && recStatusText) {
+      recStatusText.textContent = `Recording... ${remaining.toFixed(1)}s left`;
+    }
+  }, 100);
+}
+
+async function saveCurrentRecordingToLibrary() {
+  if (!pendingRecording) return;
+  const rawName = sampleNameInput ? sampleNameInput.value.trim() : "";
+  const cleanName = (rawName || `Sample ${savedSamples.length + 1}`).slice(0, 24);
+
+  const compactFloat = downsampleMonoFloat32(
+    pendingRecording.floatData,
+    pendingRecording.sampleRate,
+    SAMPLE_EXPORT_RATE
+  );
+  const wavDataUrl = encodeMonoWavDataUrl(compactFloat, SAMPLE_EXPORT_RATE);
+
+  const newEntry = {
+    id: `smp_${Date.now()}`,
+    name: cleanName,
+    duration: Number(pendingRecording.duration.toFixed(2)),
+    wavDataUrl: wavDataUrl,
+    peaks: pendingRecording.peaks
+  };
+
+  savedSamples.unshift(newEntry);
+  if (!persistSavedSamplesToStorage()) {
+    savedSamples.shift();
+    return;
+  }
+
+  await decodeSampleToAudioBuffer(newEntry);
+  pendingRecording = null;
+
+  syncSampleDropdowns();
+  if (sampleLibrarySelect) sampleLibrarySelect.value = newEntry.id;
+  if (waveSelect) waveSelect.value = `sample:${newEntry.id}`;
+  if (deleteSampleBtn) deleteSampleBtn.disabled = false;
+  if (saveSampleBtn) saveSampleBtn.disabled = true;
+  if (previewRecBtn) previewRecBtn.disabled = false;
+  if (sampleNameInput) sampleNameInput.value = "";
+  if (recStatusText) {
+    recStatusText.textContent = `Saved "${newEntry.name}"! Available in Synth & all Drum Tracks.`;
+  }
+
+  recalculateStaticWaveform("synth");
+}
+
+function deleteSelectedLibrarySample() {
+  if (!sampleLibrarySelect || !sampleLibrarySelect.value) return;
+  const targetId = sampleLibrarySelect.value;
+  const idx = savedSamples.findIndex((s) => s.id === targetId);
+  if (idx === -1) return;
+
+  const removedName = savedSamples[idx].name;
+  savedSamples.splice(idx, 1);
+  delete decodedSampleBuffers[targetId];
+  persistSavedSamplesToStorage();
+
+  // Reset any drum track that was using the deleted sample back to Preset A
+  WAVECRAFT_DATA.tracks.forEach((track) => {
+    if (drumSettings[track.id] && drumSettings[track.id].presetKey === `sample:${targetId}`) {
+      const currentVol = drumSettings[track.id].volume;
+      drumSettings[track.id] = {
+        presetKey: "presetA",
+        ...track.soundPresets.presetA,
+        volume: currentVol
+      };
+      recalculateStaticWaveform(track.id);
+    }
+  });
+
+  syncSampleDropdowns();
+  recalculateStaticWaveform("synth");
+  renderDrumEditor();
+
+  if (previewRecBtn) {
+    previewRecBtn.disabled = !pendingRecording && !sampleLibrarySelect.value;
+  }
+  if (recStatusText) {
+    recStatusText.textContent = `Deleted "${removedName}" from library.`;
+  }
+}
+
+// ============================================================================
+// RACK DEFAULTS, TEMPO SYNC & WEB AUDIO BUS INITIALIZATION
+// ============================================================================
+
 function initRackDefaults() {
   Object.values(WAVECRAFT_DATA.rackModules).forEach((mod) => {
     mod.knobs.forEach((k) => {
@@ -163,7 +673,6 @@ function initRackDefaults() {
   });
 }
 
-// Compute Echo delay time in seconds based on BPM and SYNC setting
 function getSyncedDelayTimeSeconds() {
   const mode = rackState.delaySync || "free";
   if (mode === "free") return 0.28;
@@ -177,7 +686,6 @@ function getSyncedDelayTimeSeconds() {
   return 0.28;
 }
 
-// Exaggerated Hard-Knee / Soft-Clip Distortion Curve for unmistakable grit & wave squaring
 function makeDistortionCurve(amount) {
   const samples = 44100;
   const curve = new Float32Array(samples);
@@ -196,7 +704,6 @@ function makeDistortionCurve(amount) {
   return curve;
 }
 
-// Generate synthetic hall impulse response for ConvolverNode Reverb
 function createReverbImpulse(ctx, duration = 2.1, decay = 2.0) {
   const length = ctx.sampleRate * duration;
   const impulse = ctx.createBuffer(2, length, ctx.sampleRate);
@@ -209,13 +716,11 @@ function createReverbImpulse(ctx, duration = 2.1, decay = 2.0) {
   return impulse;
 }
 
-// Initialize Web Audio API with 3-Band EQ BiquadFilterNode stages, Spectrum Analyser & Isolated Space Bus
 function initAudio() {
   if (!audioCtx) {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     audioCtx = new AudioContextClass();
 
-    // Reusable 1-second white noise buffer
     const bufferSize = audioCtx.sampleRate;
     noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
     const data = noiseBuffer.getChannelData(0);
@@ -259,7 +764,6 @@ function initAudio() {
     eqTrebleFilter.type = "highshelf";
     eqTrebleFilter.frequency.value = 4500;
 
-    // Single reusable BiquadFilterNode for 60fps EQ visualizer curve calculation
     previewFilterNode = audioCtx.createBiquadFilter();
 
     driveNode = audioCtx.createWaveShaper();
@@ -274,7 +778,6 @@ function initAudio() {
     gateGainNode = audioCtx.createGain();
     gateGainNode.gain.value = 1.0;
 
-    // Post-EQ Spectrum Analyser for the Live EQ Visualizer
     eqSpectrumAnalyser = audioCtx.createAnalyser();
     eqSpectrumAnalyser.fftSize = 512;
     eqSpectrumAnalyser.smoothingTimeConstant = 0.82;
@@ -294,7 +797,7 @@ function initAudio() {
     reverbConvolver.connect(reverbWetGain);
     reverbWetGain.connect(sharedFxInputBus);
 
-    // Wire Shared Bus -> 3-Band EQ (Bass -> Mid -> Treble) -> Drive -> Compressor -> Gate -> Spectrum -> Master
+    // Wire Shared Bus -> 3-Band EQ -> Drive -> Compressor -> Gate -> Spectrum -> Master
     sharedFxInputBus.connect(eqBassFilter);
     eqBassFilter.connect(eqMidFilter);
     eqMidFilter.connect(eqTrebleFilter);
@@ -306,6 +809,11 @@ function initAudio() {
     eqSpectrumAnalyser.connect(masterBusGain);
 
     updateMasterFxParams();
+
+    // Pre-decode any saved samples from localStorage so they trigger with zero latency
+    savedSamples.forEach((s) => {
+      decodeSampleToAudioBuffer(s);
+    });
   }
 
   if (audioCtx.state === "suspended") {
@@ -318,7 +826,6 @@ function initAudio() {
   }
 }
 
-// Real-Time Noise Gate Envelope Follower
 function updateRealtimeNoiseGate() {
   if (!audioCtx || !gateAnalyserNode || !gateGainNode) return;
   const now = audioCtx.currentTime;
@@ -344,12 +851,10 @@ function updateRealtimeNoiseGate() {
   }
 }
 
-// Update 3-Band EQ, Dynamics & Synth-Only Space audio nodes whenever knobs, BPM, or bypass buttons change
 function updateMasterFxParams() {
   if (!audioCtx) return;
   const now = audioCtx.currentTime;
 
-  // Module 4: 3-Band Equalizer (Bass 120Hz, Mid 1000Hz, Treble 4500Hz)
   if (eqBassFilter && eqMidFilter && eqTrebleFilter) {
     if (rackState.bypass.eq) {
       eqBassFilter.gain.setTargetAtTime(0, now, 0.015);
@@ -362,7 +867,6 @@ function updateMasterFxParams() {
     }
   }
 
-  // Module 5: Dynamics & Grit
   if (rackState.bypass.dynamics) {
     driveNode.curve = makeDistortionCurve(0);
     compressorNode.threshold.setValueAtTime(0, now);
@@ -377,7 +881,6 @@ function updateMasterFxParams() {
     compressorNode.release.setValueAtTime(0.14, now);
   }
 
-  // Module 6: Space & Time (Synth Only + Tempo-Synced Delay)
   if (delayNode) {
     delayNode.delayTime.setTargetAtTime(getSyncedDelayTimeSeconds(), now, 0.02);
   }
@@ -395,7 +898,6 @@ function updateMasterFxParams() {
   }
 }
 
-// Synthesize crisp dry woodblock metronome click routed directly to masterBusGain (unaffected by FX)
 function playMetronomeClick(when, isBeatOne) {
   if (!audioCtx || !metronomeEnabled) return;
   const osc = audioCtx.createOscillator();
@@ -424,7 +926,6 @@ function playMetronomeClick(when, isBeatOne) {
 function computeCombinedEqResponseDb() {
   const totalDb = new Float32Array(EQ_GRAPH_POINTS);
 
-  // Use native Web Audio API getFrequencyResponse() with reusable previewFilterNode (zero 60fps allocations)
   if (audioCtx && eqBassFilter && eqMidFilter && eqTrebleFilter && previewFilterNode) {
     const magBass = new Float32Array(EQ_GRAPH_POINTS);
     const magMid = new Float32Array(EQ_GRAPH_POINTS);
@@ -455,7 +956,6 @@ function computeCombinedEqResponseDb() {
     return totalDb;
   }
 
-  // Fallback analytical biquad curve before first audio click so turning knobs updates graph immediately
   const bassGain = rackState.bypass.eq ? 0 : rackState.params.eqBass;
   const midGain = rackState.bypass.eq ? 0 : rackState.params.eqMid;
   const trebleGain = rackState.bypass.eq ? 0 : rackState.params.eqTreble;
@@ -498,13 +998,11 @@ function drawEqVisualizer() {
   eqCtx.strokeStyle = "rgba(45, 212, 191, 0.14)";
   eqCtx.lineWidth = 1;
 
-  // 0 dB center line
   eqCtx.beginPath();
   eqCtx.moveTo(0, midY);
   eqCtx.lineTo(w, midY);
   eqCtx.stroke();
 
-  // +12 dB and -12 dB guide lines
   const topGuide = midY - (12 / 22) * (midY - 6);
   const botGuide = midY + (12 / 22) * (midY - 6);
   eqCtx.setLineDash([2, 3]);
@@ -516,7 +1014,6 @@ function drawEqVisualizer() {
   eqCtx.stroke();
   eqCtx.setLineDash([]);
 
-  // Logarithmic frequency vertical markers: 100 Hz, 1 kHz, 10 kHz
   const markers = [
     { freq: 100, label: "100" },
     { freq: 1000, label: "1k" },
@@ -536,7 +1033,6 @@ function drawEqVisualizer() {
     eqCtx.fillText(m.label, Math.min(w - 20, xPos + 2), h - 3);
   });
 
-  // 1. Live Frequency Spectrum Bars behind the EQ curve when audio is playing
   if (audioCtx && eqSpectrumAnalyser && eqSpectrumData) {
     eqSpectrumAnalyser.getByteFrequencyData(eqSpectrumData);
     const nyquist = audioCtx.sampleRate / 2;
@@ -564,7 +1060,6 @@ function drawEqVisualizer() {
     }
   }
 
-  // 2. Glowing Amber/Phosphor EQ Response Curve
   const dbPoints = computeCombinedEqResponseDb();
 
   eqCtx.save();
@@ -630,6 +1125,16 @@ function sampleOscillator(type, phase) {
   return Math.sin(p * Math.PI * 2);
 }
 
+function samplePeakArray(peaks, tNorm) {
+  if (!peaks || peaks.length === 0) return 0;
+  const clamped = Math.max(0, Math.min(1, tNorm));
+  const exactIdx = clamped * (peaks.length - 1);
+  const idx0 = Math.floor(exactIdx);
+  const idx1 = Math.min(peaks.length - 1, idx0 + 1);
+  const frac = exactIdx - idx0;
+  return peaks[idx0] * (1 - frac) + peaks[idx1] * frac;
+}
+
 function recalculateStaticWaveform(channelId) {
   const vis = channelVisuals[channelId];
   if (!vis || !vis.canvas) return;
@@ -639,6 +1144,9 @@ function recalculateStaticWaveform(channelId) {
 
   if (channelId === "synth") {
     const waveType = waveSelect ? waveSelect.value : "sawtooth";
+    const isSample = waveType.startsWith("sample:");
+    const sampleObj = isSample ? getSampleById(waveType) : null;
+
     const {
       pitch,
       detune,
@@ -662,15 +1170,15 @@ function recalculateStaticWaveform(channelId) {
     const dynBypass = rackState.bypass.dynamics;
     const spaceBypass = rackState.bypass.space;
 
-    const holdTime = 0.25;
-    const totalDur = adsrBypass ? 0.65 : Math.max(0.25, attack + decay + holdTime + release);
+    const baseDur = isSample && sampleObj ? Math.max(0.25, sampleObj.duration) : 0.65;
+    const holdTime = isSample && sampleObj ? Math.max(0.1, sampleObj.duration - (attack + decay)) : 0.25;
+    const totalDur = adsrBypass ? baseDur : Math.max(0.25, attack + decay + holdTime + release);
 
     const pitchMult = tuningBypass ? 1.0 : Math.pow(2, pitch / 12);
     const baseCycles = Math.max(4, Math.min(38, 14 * Math.pow(pitchMult, 0.55)));
     const detuneRatio = tuningBypass ? 1.0 : Math.pow(2, detune / 1200);
     const hasDetuneTwin = !tuningBypass && Math.abs(detune) > 0.5;
 
-    // Echo visual spacing reflects tempo sync setting
     const delaySec = getSyncedDelayTimeSeconds();
     const echoOffsetRatio = Math.min(0.45, Math.max(0.12, delaySec / Math.max(0.6, totalDur)));
 
@@ -683,7 +1191,7 @@ function recalculateStaticWaveform(channelId) {
 
       let env = 1.0;
       if (adsrBypass) {
-        env = tNorm < 0.85 ? 0.78 : Math.max(0, 0.78 * (1 - (tNorm - 0.85) / 0.15));
+        env = tNorm < 0.9 ? 0.92 : Math.max(0, 0.92 * (1 - (tNorm - 0.9) / 0.1));
       } else if (tSec < attack) {
         env = tSec / Math.max(0.001, attack);
       } else if (tSec < attack + decay) {
@@ -701,10 +1209,20 @@ function recalculateStaticWaveform(channelId) {
         ? 8500
         : Math.max(60, Math.min(8500, cutoff + (modDepth / 100) * cutoff * 0.75 * lfoWave));
 
-      let rawSample = sampleOscillator(waveType, tNorm * baseCycles);
-      if (hasDetuneTwin) {
-        const twinSample = sampleOscillator(waveType, tNorm * baseCycles * detuneRatio + 0.17);
-        rawSample = (rawSample + twinSample) * 0.62;
+      let rawSample = 0;
+      if (isSample && sampleObj && sampleObj.peaks) {
+        const speedNorm = Math.min(2.0, Math.max(0.5, pitchMult));
+        rawSample = samplePeakArray(sampleObj.peaks, Math.min(1, tNorm * speedNorm));
+        if (hasDetuneTwin) {
+          const twinSample = samplePeakArray(sampleObj.peaks, Math.min(1, tNorm * speedNorm * 0.985 + 0.015));
+          rawSample = (rawSample + twinSample) * 0.65;
+        }
+      } else {
+        rawSample = sampleOscillator(waveType, tNorm * baseCycles);
+        if (hasDetuneTwin) {
+          const twinSample = sampleOscillator(waveType, tNorm * baseCycles * detuneRatio + 0.17);
+          rawSample = (rawSample + twinSample) * 0.62;
+        }
       }
 
       if (!filterBypass) {
@@ -756,27 +1274,38 @@ function recalculateStaticWaveform(channelId) {
     const s = drumSettings[channelId];
     if (!s) return;
 
-    const totalDur = Math.max(0.06, s.attack + s.decay);
+    const isSample = s.presetKey && s.presetKey.startsWith("sample:");
+    const sampleObj = isSample ? getSampleById(s.presetKey) : null;
+
+    const totalDur = isSample && sampleObj
+      ? Math.max(0.1, sampleObj.duration)
+      : Math.max(0.06, s.attack + s.decay);
     const attackRatio = Math.min(0.65, s.attack / totalDur);
     let lpState = 0;
 
     for (let i = 0; i < numSamples; i++) {
       const tNorm = i / (numSamples - 1);
 
-      let env = 0;
+      let env = 1.0;
       if (tNorm < attackRatio) {
         env = tNorm / Math.max(0.001, attackRatio);
-      } else {
+      } else if (!isSample) {
         const decRatio = (tNorm - attackRatio) / Math.max(0.001, 1 - attackRatio);
         env = Math.pow(Math.max(0, 1 - decRatio), 2.4);
+      } else {
+        env = tNorm > 0.9 ? Math.max(0, 1 - (tNorm - 0.9) / 0.1) : 1.0;
       }
 
-      const freqCurve = s.startFreq * Math.pow(Math.max(20, s.endFreq) / s.startFreq, tNorm);
-      const phase = (freqCurve / 55) * tNorm * 4.5;
-      const tone = sampleOscillator(s.wave, phase);
-
-      const pseudoNoise = Math.sin(i * 12.9898) * Math.cos(i * 78.233);
-      let raw = tone * (1 - s.noiseMix * 0.5) + pseudoNoise * s.noiseMix;
+      let raw = 0;
+      if (isSample && sampleObj && sampleObj.peaks) {
+        raw = samplePeakArray(sampleObj.peaks, tNorm);
+      } else {
+        const freqCurve = s.startFreq * Math.pow(Math.max(20, s.endFreq) / s.startFreq, tNorm);
+        const phase = (freqCurve / 55) * tNorm * 4.5;
+        const tone = sampleOscillator(s.wave, phase);
+        const pseudoNoise = Math.sin(i * 12.9898) * Math.cos(i * 78.233);
+        raw = tone * (1 - s.noiseMix * 0.5) + pseudoNoise * s.noiseMix;
+      }
 
       const highSmooth = Math.min(0.96, Math.max(0.08, s.highCut / 14000));
       lpState += highSmooth * (raw - lpState);
@@ -860,7 +1389,7 @@ function drawChannelCanvas(vis, nowTime) {
 }
 
 // ============================================================================
-// DRUM & SYNTH AUDIO ENGINES
+// DRUM & SYNTH AUDIO ENGINES (SYNTHETIC + RECORDED MIC SAMPLES)
 // ============================================================================
 
 function initDrumSettings() {
@@ -881,7 +1410,7 @@ function isTrackAudible(trackId) {
   return !state.muted;
 }
 
-function playDrumSound(trackId, when = null, ignoreMuteSolo = false) {
+async function playDrumSound(trackId, when = null, ignoreMuteSolo = false) {
   initAudio();
   if (!ignoreMuteSolo && !isTrackAudible(trackId)) return;
 
@@ -890,8 +1419,53 @@ function playDrumSound(trackId, when = null, ignoreMuteSolo = false) {
 
   const startTime = when !== null ? when : audioCtx.currentTime;
   const attack = Math.max(0.001, s.attack);
-  const totalTime = attack + s.decay;
 
+  const lowCutFilter = audioCtx.createBiquadFilter();
+  lowCutFilter.type = "highpass";
+  lowCutFilter.frequency.setValueAtTime(s.lowCut, startTime);
+
+  const midCutFilter = audioCtx.createBiquadFilter();
+  midCutFilter.type = "peaking";
+  midCutFilter.frequency.setValueAtTime(1000, startTime);
+  midCutFilter.Q.setValueAtTime(1.2, startTime);
+  midCutFilter.gain.setValueAtTime(s.midCut, startTime);
+
+  const highCutFilter = audioCtx.createBiquadFilter();
+  highCutFilter.type = "lowpass";
+  highCutFilter.frequency.setValueAtTime(s.highCut, startTime);
+
+  lowCutFilter.connect(midCutFilter);
+  midCutFilter.connect(highCutFilter);
+  highCutFilter.connect(sharedFxInputBus);
+
+  // Branch A: Custom Recorded Mic Sample assigned to this drum track
+  if (s.presetKey && s.presetKey.startsWith("sample:")) {
+    const sampleObj = getSampleById(s.presetKey);
+    if (!sampleObj) return;
+    const buffer = sampleObj.audioBuffer || (await decodeSampleToAudioBuffer(sampleObj));
+    if (!buffer) return;
+
+    const dur = buffer.duration;
+    triggerWaveformPlayhead(trackId, startTime, Math.max(0.12, dur));
+
+    const src = audioCtx.createBufferSource();
+    src.buffer = buffer;
+
+    const envGain = audioCtx.createGain();
+    envGain.gain.setValueAtTime(0.0001, startTime);
+    envGain.gain.linearRampToValueAtTime(s.volume, startTime + Math.min(attack, dur * 0.5));
+    envGain.gain.setValueAtTime(s.volume, startTime + Math.max(attack, dur - 0.02));
+    envGain.gain.linearRampToValueAtTime(0.0001, startTime + dur);
+
+    src.connect(envGain);
+    envGain.connect(lowCutFilter);
+    src.start(startTime);
+    src.stop(startTime + dur + 0.02);
+    return;
+  }
+
+  // Branch B: Standard Synthesized Drum Voice
+  const totalTime = attack + s.decay;
   triggerWaveformPlayhead(trackId, startTime, Math.max(0.12, totalTime));
 
   const osc = audioCtx.createOscillator();
@@ -913,27 +1487,9 @@ function playDrumSound(trackId, when = null, ignoreMuteSolo = false) {
   envGain.gain.linearRampToValueAtTime(s.volume, startTime + attack);
   envGain.gain.exponentialRampToValueAtTime(0.0001, startTime + totalTime);
 
-  const lowCutFilter = audioCtx.createBiquadFilter();
-  lowCutFilter.type = "highpass";
-  lowCutFilter.frequency.setValueAtTime(s.lowCut, startTime);
-
-  const midCutFilter = audioCtx.createBiquadFilter();
-  midCutFilter.type = "peaking";
-  midCutFilter.frequency.setValueAtTime(1000, startTime);
-  midCutFilter.Q.setValueAtTime(1.2, startTime);
-  midCutFilter.gain.setValueAtTime(s.midCut, startTime);
-
-  const highCutFilter = audioCtx.createBiquadFilter();
-  highCutFilter.type = "lowpass";
-  highCutFilter.frequency.setValueAtTime(s.highCut, startTime);
-
   oscGain.connect(envGain);
   noiseGain.connect(envGain);
-
   envGain.connect(lowCutFilter);
-  lowCutFilter.connect(midCutFilter);
-  midCutFilter.connect(highCutFilter);
-  highCutFilter.connect(sharedFxInputBus);
 
   osc.start(startTime);
   noise.start(startTime);
@@ -941,16 +1497,112 @@ function playDrumSound(trackId, when = null, ignoreMuteSolo = false) {
   noise.stop(startTime + totalTime + 0.02);
 }
 
-function playSynthNote(baseFreq = 220) {
+async function playSynthNote(baseFreq = 220) {
   initAudio();
   const now = audioCtx.currentTime;
+  const selectedSource = waveSelect.value;
 
   const pitchSemis = rackState.bypass.tuning ? 0 : rackState.params.pitch;
   const detuneCents = rackState.bypass.tuning ? 0 : rackState.params.detune;
   const shiftedFreq = baseFreq * Math.pow(2, pitchSemis / 12);
 
+  // Branch A: Recorded Mic Sample played through the 6-module Synth Rack
+  if (selectedSource.startsWith("sample:")) {
+    const sampleObj = getSampleById(selectedSource);
+    if (!sampleObj) return;
+    const buffer = sampleObj.audioBuffer || (await decodeSampleToAudioBuffer(sampleObj));
+    if (!buffer) return;
+
+    // A3 (220 Hz) plays at 1.0x natural pitch; keys A-K and Pitch knob transpose musically
+    const playbackRate = Math.max(0.25, Math.min(4.0, shiftedFreq / 220));
+    const naturalDur = buffer.duration / playbackRate;
+
+    const srcPrimary = audioCtx.createBufferSource();
+    srcPrimary.buffer = buffer;
+    srcPrimary.playbackRate.setValueAtTime(playbackRate, now);
+    srcPrimary.detune.setValueAtTime(-detuneCents * 0.5, now);
+
+    const sourceMixer = audioCtx.createGain();
+    sourceMixer.gain.value = 1.0;
+    srcPrimary.connect(sourceMixer);
+
+    let srcTwin = null;
+    if (!rackState.bypass.tuning && Math.abs(detuneCents) > 0.5) {
+      srcTwin = audioCtx.createBufferSource();
+      srcTwin.buffer = buffer;
+      srcTwin.playbackRate.setValueAtTime(playbackRate, now);
+      srcTwin.detune.setValueAtTime(detuneCents * 0.5, now);
+
+      const twinGain = audioCtx.createGain();
+      twinGain.gain.value = 0.72;
+      srcTwin.connect(twinGain);
+      twinGain.connect(sourceMixer);
+      sourceMixer.gain.value = 0.7;
+    }
+
+    const envGain = audioCtx.createGain();
+    let totalNoteDuration = naturalDur;
+
+    if (rackState.bypass.adsr) {
+      envGain.gain.setValueAtTime(0.0001, now);
+      envGain.gain.linearRampToValueAtTime(0.85, now + 0.008);
+      envGain.gain.setValueAtTime(0.85, now + Math.max(0.01, naturalDur - 0.02));
+      envGain.gain.linearRampToValueAtTime(0.0001, now + naturalDur);
+    } else {
+      const { attack, decay, sustain, release } = rackState.params;
+      const holdTime = Math.max(0.12, naturalDur - (attack + decay));
+      const peakGain = 0.9;
+      const sustainGain = Math.max(0.001, peakGain * sustain);
+      totalNoteDuration = attack + decay + holdTime + release;
+
+      envGain.gain.setValueAtTime(0.0001, now);
+      envGain.gain.linearRampToValueAtTime(peakGain, now + attack);
+      envGain.gain.exponentialRampToValueAtTime(sustainGain, now + attack + decay);
+      envGain.gain.setValueAtTime(sustainGain, now + attack + decay + holdTime);
+      envGain.gain.exponentialRampToValueAtTime(0.0001, now + totalNoteDuration);
+    }
+
+    triggerWaveformPlayhead("synth", now, totalNoteDuration);
+
+    let lastNode = sourceMixer;
+    if (!rackState.bypass.filter) {
+      const filter = audioCtx.createBiquadFilter();
+      filter.type = rackState.filterType;
+      filter.frequency.setValueAtTime(rackState.params.cutoff, now);
+      filter.Q.setValueAtTime(rackState.params.resonance, now);
+
+      const modAmt = rackState.params.modDepth;
+      if (modAmt > 0) {
+        const lfoOsc = audioCtx.createOscillator();
+        const lfoGain = audioCtx.createGain();
+        lfoOsc.type = "sine";
+        lfoOsc.frequency.setValueAtTime(1.5 + (modAmt / 100) * 9, now);
+        lfoGain.gain.setValueAtTime((modAmt / 100) * (rackState.params.cutoff * 0.85), now);
+        lfoOsc.connect(lfoGain);
+        lfoGain.connect(filter.frequency);
+        lfoOsc.start(now);
+        lfoOsc.stop(now + totalNoteDuration + 0.05);
+      }
+
+      lastNode.connect(filter);
+      lastNode = filter;
+    }
+
+    lastNode.connect(envGain);
+    envGain.connect(synthSpaceInputBus);
+
+    srcPrimary.start(now);
+    srcPrimary.stop(now + totalNoteDuration + 0.05);
+    if (srcTwin) {
+      srcTwin.start(now);
+      srcTwin.stop(now + totalNoteDuration + 0.05);
+    }
+    return;
+  }
+
+  // Branch B: Standard Analog Oscillator Wave
   const oscPrimary = audioCtx.createOscillator();
-  oscPrimary.type = waveSelect.value;
+  oscPrimary.type = selectedSource;
   oscPrimary.frequency.setValueAtTime(shiftedFreq, now);
   oscPrimary.detune.setValueAtTime(-detuneCents * 0.5, now);
 
@@ -961,7 +1613,7 @@ function playSynthNote(baseFreq = 220) {
   let oscTwin = null;
   if (!rackState.bypass.tuning && Math.abs(detuneCents) > 0.5) {
     oscTwin = audioCtx.createOscillator();
-    oscTwin.type = waveSelect.value;
+    oscTwin.type = selectedSource;
     oscTwin.frequency.setValueAtTime(shiftedFreq, now);
     oscTwin.detune.setValueAtTime(detuneCents * 0.5, now);
 
@@ -1165,7 +1817,6 @@ function createKnob({ label, min, max, step, value, defaultValue, unit, guideDat
   return wrapper;
 }
 
-// Render all 6 Modular Analog Rack Cards
 function renderModularRack() {
   Object.entries(WAVECRAFT_DATA.rackModules).forEach(([modKey, modData]) => {
     const container = document.getElementById(`knobs-${modKey}`);
@@ -1275,7 +1926,6 @@ function setupModularRackControls() {
   }
 }
 
-// Render the Drum Sound Editor knobs for the currently selected instrument
 function renderDrumEditor() {
   const track = WAVECRAFT_DATA.tracks.find((t) => t.id === selectedTrackId);
   const settings = drumSettings[selectedTrackId];
@@ -1400,7 +2050,6 @@ function getStepBankClass(stepIndex) {
 
 function renderGrid() {
   sequencerGrid.innerHTML = "";
-  // Initialize cached step button lookup table: stepElementsByStep[step] = [btn, btn, ...]
   stepElementsByStep = Array.from({ length: stepCount }, () => []);
 
   WAVECRAFT_DATA.tracks.forEach((track) => {
@@ -1467,14 +2116,42 @@ function renderGrid() {
       presetDropdown.appendChild(opt);
     });
 
+    // Append saved mic samples so any drum track can play & sculpt custom recordings
+    if (savedSamples.length > 0) {
+      const sepOpt = document.createElement("option");
+      sepOpt.disabled = true;
+      sepOpt.textContent = "── MIC LIBRARY ──";
+      presetDropdown.appendChild(sepOpt);
+
+      savedSamples.forEach((s) => {
+        const opt = document.createElement("option");
+        opt.value = `sample:${s.id}`;
+        opt.textContent = `🎤 ${s.name}`;
+        if (drumSettings[track.id].presetKey === `sample:${s.id}`) opt.selected = true;
+        presetDropdown.appendChild(opt);
+      });
+    }
+
     presetDropdown.addEventListener("change", (e) => {
       const chosenKey = e.target.value;
       const currentVol = drumSettings[track.id].volume;
-      drumSettings[track.id] = {
-        presetKey: chosenKey,
-        ...track.soundPresets[chosenKey],
-        volume: currentVol
-      };
+
+      if (chosenKey.startsWith("sample:")) {
+        const sampleObj = getSampleById(chosenKey);
+        drumSettings[track.id] = {
+          ...track.soundPresets.presetA,
+          presetKey: chosenKey,
+          label: sampleObj ? `🎤 ${sampleObj.name}` : "Mic Sample",
+          volume: currentVol
+        };
+      } else {
+        drumSettings[track.id] = {
+          presetKey: chosenKey,
+          ...track.soundPresets[chosenKey],
+          volume: currentVol
+        };
+      }
+
       selectedTrackId = track.id;
       document.querySelectorAll(".track-row").forEach((r) => {
         r.classList.toggle("selected-track", r.dataset.trackId === selectedTrackId);
@@ -1544,7 +2221,6 @@ function renderGrid() {
       btn.dataset.track = track.id;
       btn.dataset.step = step;
 
-      // Cache step button reference by step index
       stepElementsByStep[step].push(btn);
 
       btn.addEventListener("click", () => {
@@ -1563,7 +2239,6 @@ function renderGrid() {
   updateMuteSoloVisuals();
 }
 
-// Helper to highlight the active playhead column using cached DOM nodes
 function updatePlayheadColumnHighlight(newStep) {
   if (lastDrawnVisualStep >= 0 && stepElementsByStep[lastDrawnVisualStep]) {
     const prevButtons = stepElementsByStep[lastDrawnVisualStep];
@@ -1808,9 +2483,61 @@ function setupTooltips() {
   });
 }
 
+function setupSamplerControls() {
+  if (recMicBtn) {
+    recMicBtn.addEventListener("click", startMicRecording);
+  }
+
+  if (previewRecBtn) {
+    previewRecBtn.addEventListener("click", () => {
+      if (waveSelect && !waveSelect.value.startsWith("sample:")) {
+        if (pendingRecording) {
+          waveSelect.value = "sample:unsaved";
+        } else if (sampleLibrarySelect && sampleLibrarySelect.value) {
+          waveSelect.value = `sample:${sampleLibrarySelect.value}`;
+        }
+        recalculateStaticWaveform("synth");
+      }
+      playSynthNote(parseFloat(noteSelect.value) || 220);
+    });
+  }
+
+  if (saveSampleBtn) {
+    saveSampleBtn.addEventListener("click", saveCurrentRecordingToLibrary);
+  }
+
+  if (sampleLibrarySelect) {
+    sampleLibrarySelect.addEventListener("change", () => {
+      const chosenId = sampleLibrarySelect.value;
+      if (deleteSampleBtn) deleteSampleBtn.disabled = !chosenId;
+
+      if (chosenId) {
+        if (waveSelect) waveSelect.value = `sample:${chosenId}`;
+        if (previewRecBtn) previewRecBtn.disabled = false;
+        recalculateStaticWaveform("synth");
+        const sampleObj = getSampleById(chosenId);
+        if (sampleObj && recStatusText) {
+          recStatusText.textContent = `Loaded "${sampleObj.name}" (${sampleObj.duration}s) into Synth.`;
+        }
+        playSynthNote(parseFloat(noteSelect.value) || 220);
+      }
+    });
+  }
+
+  if (deleteSampleBtn) {
+    deleteSampleBtn.addEventListener("click", deleteSelectedLibrarySample);
+  }
+}
+
 function startApp() {
+  loadSavedSamplesFromStorage();
   initRackDefaults();
   initDrumSettings();
+  syncSampleDropdowns();
+
+  if (savedSamples.length > 0 && recStatusText) {
+    recStatusText.textContent = `${savedSamples.length} saved sample${savedSamples.length === 1 ? "" : "s"} ready in library.`;
+  }
 
   if (learnToggleBtn) {
     learnToggleBtn.addEventListener("click", () => {
@@ -1840,11 +2567,16 @@ function startApp() {
   waveSelect.addEventListener("change", () => {
     recalculateStaticWaveform("synth");
     const waveName = waveSelect.options[waveSelect.selectedIndex].text;
+    const isSample = waveSelect.value.startsWith("sample:");
     updateSoundDesignGuide({
-      title: `Oscillator Waveform • ${waveName}`,
-      what: "Chooses the foundational geometric shape of the vibrating sound wave before filtering or effects.",
-      listen: "Sine is pure and subby; Triangle is warm; Sawtooth is rich and buzzy; Square is hollow and retro.",
-      watch: "Watch the fundamental cycle shape on the OSC Waveform screen switch immediately."
+      title: isSample ? `Mic Sample • ${waveName}` : `Oscillator Waveform • ${waveName}`,
+      what: isSample
+        ? "Uses your recorded microphone sample as the sound source, pitched across keys A–K and routed through all 6 rack modules."
+        : "Chooses the foundational geometric shape of the vibrating sound wave before filtering or effects.",
+      listen: isSample
+        ? "Play keys A–K to pitch-shift your sample, or turn Cutoff, Drive, ADSR, and Echo to reshape it."
+        : "Sine is pure and subby; Triangle is warm; Sawtooth is rich and buzzy; Square is hollow and retro.",
+      watch: "Watch the waveform on the OSC Waveform screen reshape immediately as you turn any rack knob."
     });
   });
 
@@ -1875,6 +2607,7 @@ function startApp() {
     renderGrid();
   });
 
+  setupSamplerControls();
   setupTooltips();
   setupModularRackControls();
   setupKeyboardShortcuts();
