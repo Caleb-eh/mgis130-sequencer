@@ -419,6 +419,19 @@ body {
   box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.6);
 }
 
+/* Global Drum Space (Echo & Reverb) Recessed Container */
+.drum-global-space-box {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: #11161b;
+  border: 1px solid #234942;
+  border-top: 2px solid var(--phosphor-teal);
+  padding: 0.35rem 0.75rem;
+  border-radius: 6px;
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.65);
+}
+
 .control-group {
   display: flex;
   flex-direction: column;
@@ -449,7 +462,7 @@ input[type="number"] {
 }
 
 .hardware-text-input {
-  width: 150px;
+  width: 145px;
   color: var(--text-cream);
 }
 
@@ -591,7 +604,7 @@ input[type="range"] {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
-  gap: 0.65rem;
+  gap: 0.6rem;
 }
 
 .sampler-group > .badge {
@@ -603,7 +616,7 @@ input[type="range"] {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.72rem;
   color: var(--phosphor-teal);
-  max-width: 250px;
+  max-width: 240px;
 }
 
 .rec-status-text.recording {
@@ -830,7 +843,7 @@ input[type="range"] {
 .knob-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 1.4rem;
+  gap: 1.35rem;
   align-items: center;
 }
 
@@ -899,9 +912,9 @@ input[type="range"] {
   font-variant-numeric: tabular-nums;
 }
 
-/* Mini Volume Knob inside Sequencer Row */
+/* Mini Volume & Toolbar Knobs */
 .mini-knob {
-  min-width: 32px;
+  min-width: 36px;
 }
 
 .mini-knob .knob-dial {
@@ -916,8 +929,12 @@ input[type="range"] {
   top: 1px;
 }
 
+.mini-knob .knob-label {
+  font-size: 0.6rem;
+}
+
 .mini-knob .knob-value {
-  font-size: 0.62rem;
+  font-size: 0.6rem;
 }
 
 /* Drum Voice Shaping Strip */

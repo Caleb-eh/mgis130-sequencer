@@ -187,8 +187,12 @@
                 <input type="text" id="sample-name-input" class="hardware-text-input" maxlength="24" placeholder="e.g. Vocal Chop" />
               </label>
 
-              <button type="button" id="save-sample-btn" class="btn btn-amber btn-sm" disabled data-tip="Save the selected slice to your built-in library so you can reuse and reshape it anytime.">
-                SAVE TO LIBRARY
+              <button type="button" id="save-sample-btn" class="btn btn-secondary btn-sm" disabled data-tip="Save only the chopped audio slice to your library with clean default settings.">
+                SAVE CLEAN CHOP
+              </button>
+
+              <button type="button" id="save-sample-fx-btn" class="btn btn-amber btn-sm" disabled data-tip="Save the chopped audio slice PLUS your current OSC Tuning, ADSR, Filter, 3-Band EQ, and Dynamics settings (excludes Space) so they load back in both Synth and Drum Sequencer.">
+                SAVE CHOP + SOUND
               </button>
 
               <label class="control-group" data-tip="Pick any saved recording to load it into the Sample Chopper, Wave Synthesizer, and Drum Tracks.">
@@ -298,7 +302,7 @@
                   <option value="1/8d">1/8D</option>
                   <option value="1/4">1/4</option>
                 </select>
-                <button type="button" class="bypass-btn active" data-module="space" data-tip="Bypass Echo and Reverb on the Synthesizer. Drums bypass this module so beats stay punchy.">ON</button>
+                <button type="button" class="bypass-btn active" data-module="space" data-tip="Bypass Echo and Reverb on the Synthesizer. Drums have their own Space controls below.">ON</button>
               </div>
             </div>
             <div class="module-knobs" id="knobs-space"></div>
@@ -329,6 +333,11 @@
               <button type="button" id="metro-btn" class="btn btn-metro" aria-pressed="false" data-tip="Built-In Metronome: plays a crisp dry woodblock click on every quarter-note beat (higher pitch on Beat 1).">
                 CLICK: OFF
               </button>
+            </div>
+
+            <!-- Global Drum Space (Echo & Reverb) Knobs Container -->
+            <div class="drum-global-space-box" id="drum-global-space-knobs" data-tip="Global Drum Space: scales Echo and Reverb across all drum tracks simultaneously.">
+              <!-- Global Drum Echo & Reverb rotary knobs rendered by script.js -->
             </div>
 
             <!-- Grid & Groove Controls -->
@@ -366,11 +375,11 @@
           </div>
 
           <div class="knob-row" id="drum-knobs-container">
-            <!-- Rotary knobs rendered by script.js -->
+            <!-- Rotary knobs (Low-Cut, Mid-Cut, High-Cut, Attack + Track Echo & Track Reverb) rendered by script.js -->
           </div>
         </div>
 
-        <p id="sample-status" class="status-note">Keys 1–4 trigger drums live • Use M (Mute) &amp; S (Solo) to isolate voices • Click any voice plate to sculpt EQ &amp; Attack.</p>
+        <p id="sample-status" class="status-note">Keys 1–4 trigger drums live • Use M (Mute) &amp; S (Solo) to isolate voices • Click any voice plate to sculpt EQ, Attack, Echo &amp; Reverb.</p>
         <div id="sequencer-grid" class="sequencer-grid"></div>
       </section>
     </main>
