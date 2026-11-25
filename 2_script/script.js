@@ -111,11 +111,11 @@ const drumGlobalSpace = {
   reverb: 100  // Global drum reverb master level (0-100%)
 };
 
-// Modular Rack Parameter State & Bypass Flags
-const rackState = {
-  filterType: "lowpass",
-  delaySync: "1/8",
-  bypass: {
+// Multi-Section Arranger State (Sections A, B, ... up to H)
+const SECTION_LETTERS = ["A", "B", "C", "D", "E", "F", "G", "H"];
+let sections = []; // Array of { id, name, stepCount, grid }
+let activeSectionIndex = 0;
+let chainSectionsEnabled = false;
     tuning: false,
     adsr: false,
     filter: false,
@@ -166,11 +166,11 @@ const drumGlobalSpaceKnobs = document.getElementById("drum-global-space-knobs");
 const editorTrackBadge = document.getElementById("editor-track-badge");
 const editorTrackTitle = document.getElementById("editor-track-title");
 
-// Mic Sampler, Sample Chopper & Library DOM References
-const recLengthSelect = document.getElementById("rec-length-select");
-const recMicBtn = document.getElementById("rec-mic-btn");
-const previewRecBtn = document.getElementById("preview-rec-btn");
-const recStatusText = document.getElementById("rec-status-text");
+// Multi-Section Arranger DOM References
+const sectionTabsContainer = document.getElementById("section-tabs");
+const addSectionBtn = document.getElementById("add-section-btn");
+const copySectionBtn = document.getElementById("copy-section-btn");
+const chainSectionsBtn = document.getElementById("chain-sections-btn");
 const sampleNameInput = document.getElementById("sample-name-input");
 const saveSampleBtn = document.getElementById("save-sample-btn");
 const saveSampleFxBtn = document.getElementById("save-sample-fx-btn");
@@ -2041,12 +2041,17 @@ function connectDrumTrackOutput(outputNode, trackSettings, startTime) {
   }
 }
 
-async function playDrumSound(trackId, when = null, ignoreMuteSolo = false) {
+async function playDrumSound(trackId, when = null, ignoreMuteSolo = false, stepVelocity = 1.0) {
   initAudio();
   if (!ignoreMuteSolo && !isTrackAudible(trackId)) return;
 
   const s = drumSettings[trackId];
   if (!s || s.volume <= 0.01) return;
+
+  const vel = Math.max(0.1, Math.min(1.0, Number(stepVelocity) || 1.0));
+  const effectiveVolume = s.volume * vel;
+  // Slightly open the high-cut filter on louder hits for natural acoustic velocity dynamics
+  const velHighCut = Math.min(18000, s.highCut * (0.72 + 0.28 * vel));
 
   const startTime = when !== null ? when : audioCtx.currentTime;
   const attack = Math.max(0.001, s.attack);
@@ -2063,7 +2068,7 @@ async function playDrumSound(trackId, when = null, ignoreMuteSolo = false) {
 
   const highCutFilter = audioCtx.createBiquadFilter();
   highCutFilter.type = "lowpass";
-  highCutFilter.frequency.setValueAtTime(s.highCut, startTime);
+  highCutFilter.frequency.setValueAtTime(velHighCut, startTime);
 
   lowCutFilter.connect(midCutFilter);
   midCutFilter.connect(highCutFilter);
@@ -2193,7 +2198,7 @@ async function playDrumSound(trackId, when = null, ignoreMuteSolo = false) {
       const sdRelease = Math.max(0.02, sdParams.release !== undefined ? sdParams.release : 0.35);
 
       const holdTime = Math.max(0.05, fixedDur - (sdAttack + sdDecay));
-      const peakGain = s.volume * 1.1;
+      const peakGain = effectiveVolume * 1.1;
       const sustainGain = Math.max(0.001, peakGain * sdSustain);
       totalPlayDur = sdAttack + sdDecay + holdTime + sdRelease;
 
@@ -2204,8 +2209,8 @@ async function playDrumSound(trackId, when = null, ignoreMuteSolo = false) {
       envGain.gain.exponentialRampToValueAtTime(0.0001, startTime + totalPlayDur);
     } else {
       envGain.gain.setValueAtTime(0.0001, startTime);
-      envGain.gain.linearRampToValueAtTime(s.volume, startTime + Math.min(attack, fixedDur * 0.5));
-      envGain.gain.setValueAtTime(s.volume, startTime + Math.max(attack, fixedDur - 0.02));
+      envGain.gain.linearRampToValueAtTime(effectiveVolume, startTime + Math.min(attack, fixedDur * 0.5));
+      envGain.gain.setValueAtTime(effectiveVolume, startTime + Math.max(attack, fixedDur - 0.02));
       envGain.gain.linearRampToValueAtTime(0.0001, startTime + fixedDur);
     }
 
@@ -2243,7 +2248,7 @@ async function playDrumSound(trackId, when = null, ignoreMuteSolo = false) {
 
   const envGain = audioCtx.createGain();
   envGain.gain.setValueAtTime(0.0001, startTime);
-  envGain.gain.linearRampToValueAtTime(s.volume, startTime + attack);
+  envGain.gain.linearRampToValueAtTime(effectiveVolume, startTime + attack);
   envGain.gain.exponentialRampToValueAtTime(0.0001, startTime + totalTime);
 
   oscGain.connect(envGain);
@@ -2902,6 +2907,152 @@ function getStepBankClass(stepIndex) {
   return "bank-cream";
 }
 
+function createEmptyGridPattern() {
+  const empty = {};
+  WAVECRAFT_DATA.tracks.forEach((t) => {
+    empty[t.id] = Array(32).fill(0);
+  });
+  return empty;
+}
+
+function cloneGridPattern(sourceGrid) {
+  const copy = {};
+  WAVECRAFT_DATA.tracks.forEach((t) => {
+    const row = sourceGrid && sourceGrid[t.id] ? sourceGrid[t.id] : [];
+    copy[t.id] = Array.from({ length: 32 }, (_, idx) => Number(row[idx]) || 0);
+  });
+  return copy;
+}
+
+function renderSectionTabs() {
+  if (!sectionTabsContainer) return;
+  sectionTabsContainer.innerHTML = "";
+
+  sections.forEach((sec, idx) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "section-tab-btn";
+    if (idx === activeSectionIndex) {
+      btn.classList.add("active");
+      if (isPlaying && chainSectionsEnabled) {
+        btn.classList.add("chained-playing");
+      }
+    }
+    btn.textContent = sec.name;
+    btn.title = `Switch to Section ${sec.name} (${sec.stepCount} steps)`;
+    btn.addEventListener("click", () => {
+      switchToSection(idx);
+    });
+    sectionTabsContainer.appendChild(btn);
+  });
+
+  if (addSectionBtn) {
+    addSectionBtn.disabled = sections.length >= SECTION_LETTERS.length;
+  }
+}
+
+function switchToSection(targetIdx) {
+  if (targetIdx < 0 || targetIdx >= sections.length) return;
+  if (sections[activeSectionIndex]) {
+    sections[activeSectionIndex].grid = gridState;
+    sections[activeSectionIndex].stepCount = stepCount;
+  }
+
+  activeSectionIndex = targetIdx;
+  const nextSec = sections[activeSectionIndex];
+  gridState = nextSec.grid;
+  stepCount = nextSec.stepCount || 16;
+
+  if (stepsSelect) {
+    stepsSelect.value = String(stepCount);
+  }
+  if (currentScheduleStep >= stepCount) {
+    currentScheduleStep = 0;
+  }
+  lastDrawnVisualStep = -1;
+
+  renderSectionTabs();
+  renderGrid();
+}
+
+function addNewSection() {
+  if (sections.length >= SECTION_LETTERS.length) return;
+  if (sections[activeSectionIndex]) {
+    sections[activeSectionIndex].grid = gridState;
+    sections[activeSectionIndex].stepCount = stepCount;
+  }
+
+  const nextLetter = SECTION_LETTERS[sections.length];
+  sections.push({
+    id: `sec_${nextLetter}`,
+    name: nextLetter,
+    stepCount: stepCount,
+    grid: createEmptyGridPattern()
+  });
+
+  switchToSection(sections.length - 1);
+  updateSoundDesignGuide({
+    title: `Pattern Arranger • Added Section ${nextLetter}`,
+    what: `Created blank Section ${nextLetter} so you can program a fill, breakdown, or chorus variation.`,
+    listen: "Turn on CHAIN: ON to hear the sequencer automatically advance from Section A through all your sections.",
+    watch: "Watch the active section badge light up as each pattern plays."
+  });
+}
+
+function copyCurrentSectionToNext() {
+  if (sections[activeSectionIndex]) {
+    sections[activeSectionIndex].grid = gridState;
+    sections[activeSectionIndex].stepCount = stepCount;
+  }
+
+  let targetIdx = activeSectionIndex + 1;
+  if (targetIdx >= sections.length) {
+    if (sections.length < SECTION_LETTERS.length) {
+      const nextLetter = SECTION_LETTERS[sections.length];
+      sections.push({
+        id: `sec_${nextLetter}`,
+        name: nextLetter,
+        stepCount: stepCount,
+        grid: cloneGridPattern(gridState)
+      });
+      targetIdx = sections.length - 1;
+    } else {
+      targetIdx = 0;
+    }
+  } else {
+    sections[targetIdx].grid = cloneGridPattern(gridState);
+    sections[targetIdx].stepCount = stepCount;
+  }
+
+  const fromName = sections[activeSectionIndex].name;
+  const toName = sections[targetIdx].name;
+  switchToSection(targetIdx);
+
+  updateSoundDesignGuide({
+    title: `Pattern Arranger • Copied ${fromName} → ${toName}`,
+    what: `Duplicated Section ${fromName}'s drum pattern and note velocities into Section ${toName}.`,
+    listen: "Tweak a few step velocities or add a snare fill at the end of this section, then enable CHAIN: ON.",
+    watch: "Watch the velocity bars inside each pad reflect your copied groove."
+  });
+}
+
+function updateStepButtonVisual(btn, velValue) {
+  const numVal = Number(velValue) || 0;
+  const isActive = numVal > 0;
+  btn.classList.toggle("active", isActive);
+
+  const fillEl = btn.querySelector(".step-vel-fill");
+  const tagEl = btn.querySelector(".step-vel-tag");
+  if (isActive) {
+    const pct = Math.round(Math.max(15, Math.min(100, numVal * 100)));
+    if (fillEl) fillEl.style.height = `${pct}%`;
+    if (tagEl) tagEl.textContent = String(pct);
+  } else {
+    if (fillEl) fillEl.style.height = "0%";
+    if (tagEl) tagEl.textContent = "";
+  }
+}
+
 function renderGrid() {
   sequencerGrid.innerHTML = "";
   stepElementsByStep = Array.from({ length: stepCount }, () => []);
@@ -3073,18 +3224,74 @@ function renderGrid() {
       led.className = "step-led";
       btn.appendChild(led);
 
-      if (gridState[track.id][step]) {
-        btn.classList.add("active");
-      }
+      const velFill = document.createElement("span");
+      velFill.className = "step-vel-fill";
+      btn.appendChild(velFill);
+
+      const velTag = document.createElement("span");
+      velTag.className = "step-vel-tag";
+      btn.appendChild(velTag);
+
+      const initialVel = Number(gridState[track.id][step]) || 0;
+      updateStepButtonVisual(btn, initialVel);
+
       btn.dataset.track = track.id;
       btn.dataset.step = step;
 
       stepElementsByStep[step].push(btn);
 
+      // Click toggles step ON (at 85% velocity) / OFF; vertical drag or mouse wheel edits velocity (15%–100%)
+      let dragStartY = 0;
+      let dragStartVel = 0;
+      let didDragVelocity = false;
+
+      btn.addEventListener("mousedown", (e) => {
+        if (e.button !== 0) return;
+        const currentVel = Number(gridState[track.id][step]) || 0;
+        if (currentVel <= 0) return;
+
+        dragStartY = e.clientY;
+        dragStartVel = currentVel;
+        didDragVelocity = false;
+
+        function onVelMouseMove(moveEvt) {
+          const dy = dragStartY - moveEvt.clientY;
+          if (Math.abs(dy) > 4) {
+            didDragVelocity = true;
+            const nextVel = Math.max(0.15, Math.min(1.0, Number((dragStartVel + dy / 90).toFixed(2))));
+            gridState[track.id][step] = nextVel;
+            updateStepButtonVisual(btn, nextVel);
+          }
+        }
+
+        function onVelMouseUp() {
+          window.removeEventListener("mousemove", onVelMouseMove);
+          window.removeEventListener("mouseup", onVelMouseUp);
+        }
+
+        window.addEventListener("mousemove", onVelMouseMove);
+        window.addEventListener("mouseup", onVelMouseUp);
+      });
+
+      btn.addEventListener("wheel", (e) => {
+        const currentVel = Number(gridState[track.id][step]) || 0;
+        if (currentVel <= 0) return;
+        e.preventDefault();
+        const delta = e.deltaY < 0 ? 0.08 : -0.08;
+        const nextVel = Math.max(0.15, Math.min(1.0, Number((currentVel + delta).toFixed(2))));
+        gridState[track.id][step] = nextVel;
+        updateStepButtonVisual(btn, nextVel);
+      }, { passive: false });
+
       btn.addEventListener("click", () => {
-        const isActive = gridState[track.id][step] ? 0 : 1;
-        gridState[track.id][step] = isActive;
-        btn.classList.toggle("active", Boolean(isActive));
+        if (didDragVelocity) {
+          didDragVelocity = false;
+          return;
+        }
+        const currentVel = Number(gridState[track.id][step]) || 0;
+        const nextVel = currentVel > 0 ? 0 : 0.85;
+        gridState[track.id][step] = nextVel;
+        updateStepButtonVisual(btn, nextVel);
       });
 
       stepsContainer.appendChild(btn);
@@ -3117,16 +3324,16 @@ function updatePlayheadColumnHighlight(newStep) {
 // 60FPS ANIMATION LOOP & LOOKAHEAD SCHEDULER
 // ============================================================================
 
-function animationFrameLoop() {
-  requestAnimationFrame(animationFrameLoop);
-  const now = audioCtx ? audioCtx.currentTime : null;
-
-  if (audioCtx) {
-    updateRealtimeNoiseGate();
-
-    if (isPlaying) {
+      if (isPlaying) {
       while (visualStepQueue.length && visualStepQueue[0].time <= now) {
         const currentEvent = visualStepQueue.shift();
+        if (
+          currentEvent.sectionIndex !== undefined &&
+          currentEvent.sectionIndex !== activeSectionIndex &&
+          sections[currentEvent.sectionIndex]
+        ) {
+          switchToSection(currentEvent.sectionIndex);
+        }
         if (currentEvent.step !== lastDrawnVisualStep) {
           updatePlayheadColumnHighlight(currentEvent.step);
         }
@@ -3152,7 +3359,11 @@ function getStepDurationSeconds(stepIndex) {
 }
 
 function scheduleStepEvents(stepIndex, stepTime) {
-  visualStepQueue.push({ step: stepIndex, time: stepTime });
+  visualStepQueue.push({
+    step: stepIndex,
+    time: stepTime,
+    sectionIndex: activeSectionIndex
+  });
 
   const stepsPerQuarter = stepCount / 4;
   if (metronomeEnabled && stepIndex % stepsPerQuarter === 0) {
@@ -3161,8 +3372,9 @@ function scheduleStepEvents(stepIndex, stepTime) {
   }
 
   WAVECRAFT_DATA.tracks.forEach((track) => {
-    if (gridState[track.id][stepIndex]) {
-      playDrumSound(track.id, stepTime, false);
+    const stepVel = Number(gridState[track.id][stepIndex]) || 0;
+    if (stepVel > 0) {
+      playDrumSound(track.id, stepTime, false, stepVel);
     }
   });
 }
@@ -3173,7 +3385,20 @@ function runLookaheadScheduler() {
   while (nextNoteTime < audioCtx.currentTime + scheduleAheadTime) {
     scheduleStepEvents(currentScheduleStep, nextNoteTime);
     nextNoteTime += getStepDurationSeconds(currentScheduleStep);
-    currentScheduleStep = (currentScheduleStep + 1) % stepCount;
+    currentScheduleStep++;
+
+    if (currentScheduleStep >= stepCount) {
+      currentScheduleStep = 0;
+      if (chainSectionsEnabled && sections.length > 1) {
+        if (sections[activeSectionIndex]) {
+          sections[activeSectionIndex].grid = gridState;
+          sections[activeSectionIndex].stepCount = stepCount;
+        }
+        activeSectionIndex = (activeSectionIndex + 1) % sections.length;
+        gridState = sections[activeSectionIndex].grid;
+        stepCount = sections[activeSectionIndex].stepCount || 16;
+      }
+    }
   }
 
   schedulerTimerId = setTimeout(runLookaheadScheduler, lookaheadMs);
@@ -3235,7 +3460,23 @@ function loadDefaultPreset(presetKey = "basicRock") {
   renderModularRack();
   updateMasterFxParams();
 
-  gridState = JSON.parse(JSON.stringify(preset.pattern));
+  const initialPatternA = cloneGridPattern(preset.pattern);
+  const initialPatternB = createEmptyGridPattern();
+  // Seed Section B with a subtle variation so switching A/B immediately works out of the box
+  WAVECRAFT_DATA.tracks.forEach((t) => {
+    initialPatternB[t.id] = [...initialPatternA[t.id]];
+  });
+  initialPatternB.clap[14] = 0.8;
+  initialPatternB.hihat[15] = 0.7;
+
+  sections = [
+    { id: "sec_A", name: "A", stepCount: stepCount, grid: initialPatternA },
+    { id: "sec_B", name: "B", stepCount: stepCount, grid: initialPatternB }
+  ];
+  activeSectionIndex = 0;
+  gridState = sections[0].grid;
+
+  renderSectionTabs();
   renderGrid();
 }
 
@@ -3249,55 +3490,60 @@ function generateSmartGroove() {
 
   for (let bar = 0; bar < 2; bar++) {
     const offset = bar * 16;
-    kick[offset + 0] = 1;
+    kick[offset + 0] = 1.0;
     if (grooveStyle === 0) {
-      kick[offset + 4] = 1;
-      kick[offset + 8] = 1;
-      kick[offset + 12] = 1;
-      if (Math.random() > 0.5) kick[offset + 14] = 1;
+      kick[offset + 4] = 0.9;
+      kick[offset + 8] = 0.95;
+      kick[offset + 12] = 0.9;
+      if (Math.random() > 0.5) kick[offset + 14] = 0.65;
     } else if (grooveStyle === 1) {
-      if (Math.random() > 0.35) kick[offset + 3] = 1;
-      kick[offset + 6] = 1;
-      if (Math.random() > 0.3) kick[offset + 10] = 1;
-      if (Math.random() > 0.65) kick[offset + 13] = 1;
+      if (Math.random() > 0.35) kick[offset + 3] = 0.7;
+      kick[offset + 6] = 0.9;
+      if (Math.random() > 0.3) kick[offset + 10] = 0.85;
+      if (Math.random() > 0.65) kick[offset + 13] = 0.6;
     } else {
-      if (Math.random() > 0.3) kick[offset + 3] = 1;
-      if (Math.random() > 0.4) kick[offset + 7] = 1;
-      kick[offset + 10] = 1;
+      if (Math.random() > 0.3) kick[offset + 3] = 0.75;
+      if (Math.random() > 0.4) kick[offset + 7] = 0.7;
+      kick[offset + 10] = 0.9;
     }
 
     if (grooveStyle === 2) {
-      snare[offset + 8] = 1;
-      if (Math.random() > 0.5) snare[offset + 14] = 1;
+      snare[offset + 8] = 1.0;
+      if (Math.random() > 0.5) snare[offset + 14] = 0.55;
     } else {
-      snare[offset + 4] = 1;
-      snare[offset + 12] = 1;
-      if (Math.random() > 0.6) snare[offset + 15] = 1;
+      snare[offset + 4] = 0.95;
+      snare[offset + 12] = 1.0;
+      if (Math.random() > 0.6) snare[offset + 15] = 0.5;
     }
 
     const hatDensity = Math.random();
     for (let s = 0; s < 16; s++) {
+      const isOffbeat = s % 4 === 2;
+      const accentVel = isOffbeat ? 0.9 : 0.55;
       if (hatDensity < 0.35) {
-        hihat[offset + s] = s % 4 === 2 ? 1 : 0;
+        hihat[offset + s] = isOffbeat ? 0.9 : 0;
       } else if (hatDensity < 0.75) {
-        hihat[offset + s] = s % 2 === 0 || (s >= 12 && Math.random() > 0.45) ? 1 : 0;
+        hihat[offset + s] = s % 2 === 0 || (s >= 12 && Math.random() > 0.45) ? accentVel : 0;
       } else {
-        hihat[offset + s] = Math.random() > 0.15 ? 1 : 0;
+        hihat[offset + s] = Math.random() > 0.15 ? (s % 2 === 0 ? 0.85 : 0.48) : 0;
       }
     }
 
-    if (Math.random() > 0.35) clap[offset + 12] = 1;
-    if (Math.random() > 0.55) clap[offset + 4] = 1;
-    if (Math.random() > 0.65) clap[offset + 14] = 1;
+    if (Math.random() > 0.35) clap[offset + 12] = 0.92;
+    if (Math.random() > 0.55) clap[offset + 4] = 0.78;
+    if (Math.random() > 0.65) clap[offset + 14] = 0.6;
   }
 
   gridState = { kick, snare, hihat, clap };
+  if (sections[activeSectionIndex]) {
+    sections[activeSectionIndex].grid = gridState;
+  }
   renderGrid();
   updateSoundDesignGuide({
-    title: "Pattern Generator • Fresh Groove Loaded",
-    what: "Programmed a balanced 32-step rhythm pattern with anchored kicks and crisp backbeats.",
-    listen: "Toggle CLICK ON to hear how syncopated hits bounce around the quarter-note pulse.",
-    watch: "Watch the backlit step pads and glowing playheads sweep across each voice's waveform."
+    title: "Pattern Generator • Dynamic Velocity Groove",
+    what: "Programmed a 32-step groove with accented downbeats and softer ghost hits.",
+    listen: "Notice how softer ghost hits (48%–65%) give the beat human pocket compared to 100% accents.",
+    watch: "Watch the vertical velocity meters inside each active step pad—drag up/down on any pad to fine-tune!"
   });
 }
 
@@ -3571,8 +3817,42 @@ function startApp() {
 
   stepsSelect.addEventListener("change", (e) => {
     stepCount = Number(e.target.value);
+    if (sections[activeSectionIndex]) {
+      sections[activeSectionIndex].stepCount = stepCount;
+    }
     if (currentScheduleStep >= stepCount) currentScheduleStep = 0;
     lastDrawnVisualStep = -1;
+    renderGrid();
+  });
+
+  if (addSectionBtn) {
+    addSectionBtn.addEventListener("click", addNewSection);
+  }
+  if (copySectionBtn) {
+    copySectionBtn.addEventListener("click", copyCurrentSectionToNext);
+  }
+  if (chainSectionsBtn) {
+    chainSectionsBtn.addEventListener("click", () => {
+      chainSectionsEnabled = !chainSectionsEnabled;
+      chainSectionsBtn.classList.toggle("active", chainSectionsEnabled);
+      chainSectionsBtn.setAttribute("aria-pressed", String(chainSectionsEnabled));
+      chainSectionsBtn.textContent = chainSectionsEnabled ? "CHAIN: ON" : "CHAIN: OFF";
+      renderSectionTabs();
+    });
+  }
+
+  swingSlider.addEventListener("input", () => {
+    swingPercent = Number(swingSlider.value);
+    swingVal.textContent = swingPercent;
+  });
+
+  clearBtn.addEventListener("click", () => {
+    WAVECRAFT_DATA.tracks.forEach((t) => {
+      gridState[t.id] = Array(32).fill(0);
+    });
+    if (sections[activeSectionIndex]) {
+      sections[activeSectionIndex].grid = gridState;
+    }
     renderGrid();
   });
 

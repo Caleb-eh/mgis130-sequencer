@@ -293,6 +293,17 @@
           <h2>RHYTHM COMPOSER &amp; STEP SEQUENCER</h2>
 
           <div class="sequencer-toolbar">
+            <!-- Multi-Section Pattern Arranger (A / B / + Add / Copy / Chain) -->
+            <div class="section-arranger-box" id="section-arranger-box" data-tip="Pattern Sections: switch between Sections A, B, C, D to build verses/choruses, add or copy sections, or enable SONG CHAIN to play all sections in order.">
+              <span class="section-box-label">SECTIONS</span>
+              <div class="section-tabs" id="section-tabs">
+                <!-- Section buttons (A, B, ...) rendered by script.js -->
+              </div>
+              <button type="button" id="add-section-btn" class="btn btn-ghost btn-xs" title="Add a new pattern section (up to 8)">+ SEC</button>
+              <button type="button" id="copy-section-btn" class="btn btn-ghost btn-xs" title="Copy current section's beat into the next section">COPY →</button>
+              <button type="button" id="chain-sections-btn" class="btn btn-metro btn-xs" aria-pressed="false" title="Play through all sections in order (A → B → C...)">CHAIN: OFF</button>
+            </div>
+
             <!-- Transport & Metronome Group -->
             <div class="sequencer-transport">
               <button id="play-btn" class="btn btn-primary" data-tip="Start or stop the drum loop and metronome (Shortcut: Spacebar).">START / STOP</button>
@@ -351,7 +362,7 @@
           </div>
         </div>
 
-        <p id="sample-status" class="status-note">Keys 1–4 trigger drums live • Use M (Mute) &amp; S (Solo) to isolate voices • Click any voice plate to sculpt EQ, Attack, Echo &amp; Reverb.</p>
+        <p id="sample-status" class="status-note">Click pads to toggle • Drag up/down (or scroll) on active pads to edit note velocity • Keys 1–4 trigger drums live • Switch Sections A/B or add more above.</p>
         <div id="sequencer-grid" class="sequencer-grid"></div>
       </section>
     </main>

@@ -1,398 +1,4 @@
-/* 3_style/style.css */
-/* PRESENTATION STYLING: Classic 1980s/90s analog drum machine & synthesizer hardware aesthetic (TR-808/909 & Akai MPC inspired). */
-
-:root {
-  --chassis-bg: #181a1f;
-  --metal-panel: #23262e;
-  --metal-panel-hi: #2c303a;
-  --module-face: #1c1f26;
-  --bezel-dark: #090c10;
-  --screen-bg: #06110e;
-  --border-dark: #0e1014;
-  --border-bevel: #3a3f4b;
-
-  --text-cream: #f5efe6;
-  --text-silkscreen: #cbd5e1;
-  --text-muted: #94a3b8;
-
-  --vintage-orange: #ea580c;
-  --vintage-red: #dc2626;
-  --vintage-amber: #f59e0b;
-  --vintage-cream: #e7dec8;
-  --phosphor-teal: #2dd4bf;
-  --mod-blue: #38bdf8;
-  --mod-purple: #a855f7;
-}
-
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-}
-
-body {
-  font-family: "Inter", system-ui, -apple-system, sans-serif;
-  background-color: #101216;
-  background-image:
-    radial-gradient(circle at 50% 0%, #242832 0%, #101216 75%);
-  color: var(--text-cream);
-  line-height: 1.45;
-  padding: 0.75rem 0.75rem 2.75rem;
-}
-
-.chassis-wrapper {
-  max-width: 1280px;
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 1.15rem;
-}
-
-/* Brushed Metal Hardware Panel with Corner Screw Heads */
-.hardware-panel {
-  position: relative;
-  background: linear-gradient(180deg, var(--metal-panel-hi) 0%, var(--metal-panel) 14%, #1e2128 100%);
-  border: 2px solid var(--border-dark);
-  border-top-color: var(--border-bevel);
-  border-left-color: #323742;
-  border-radius: 10px;
-  box-shadow:
-    0 10px 24px rgba(0, 0, 0, 0.65),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
-}
-
-/* Corner Phillips Screw Details */
-.screw {
-  position: absolute;
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  background: radial-gradient(circle at 35% 35%, #64748b, #1e293b 70%, #090d16 100%);
-  border: 1px solid #090d16;
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.25), 0 1px 2px rgba(0, 0, 0, 0.7);
-  pointer-events: none;
-  z-index: 2;
-}
-
-.screw::before,
-.screw::after {
-  content: "";
-  position: absolute;
-  background: #0f172a;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%) rotate(28deg);
-}
-
-.screw::before {
-  width: 7px;
-  height: 1.5px;
-}
-
-.screw::after {
-  width: 1.5px;
-  height: 7px;
-}
-
-.screw.tl { top: 8px; left: 8px; }
-.screw.tr { top: 8px; right: 8px; }
-.screw.bl { bottom: 8px; left: 8px; }
-.screw.br { bottom: 8px; right: 8px; }
-
-/* Top Header Bar */
-.top-bar-sticky-wrap {
-  position: relative;
-  z-index: 20;
-}
-
-.top-bar {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  align-items: center;
-  gap: 0.85rem;
-  padding: 0.85rem 1.65rem;
-}
-
-.brand-plate {
-  display: flex;
-  align-items: center;
-  gap: 0.9rem;
-}
-
-.logo-badge {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 3px;
-  background: #111419;
-  border: 1px solid #3f4654;
-  border-radius: 6px;
-  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.85);
-}
-
-.logo-text-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-}
-
-.logo-title-row {
-  display: flex;
-  align-items: center;
-  gap: 0.7rem;
-}
-
-.retro-logo-title {
-  font-family: "Arial Black", "Impact", system-ui, sans-serif;
-  font-size: 1.45rem;
-  font-weight: 900;
-  letter-spacing: 0.14em;
-  line-height: 1;
-  color: var(--text-cream);
-  text-shadow:
-    0 2px 0 #090b0e,
-    0 0 18px rgba(234, 88, 12, 0.35);
-}
-
-.model-badge {
-  background: linear-gradient(180deg, #ea580c, #c2410c);
-  color: #fffbeb;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.68rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  padding: 0.18rem 0.5rem;
-  border-radius: 3px;
-  border: 1px solid #fdba74;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
-}
-
-.pinstripe-bar {
-  height: 3px;
-  width: 100%;
-  border-radius: 2px;
-  background: linear-gradient(90deg, #dc2626 0%, #ea580c 35%, #f59e0b 70%, #e7dec8 100%);
-}
-
-.subtitle {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.11em;
-  color: var(--vintage-cream);
-  opacity: 0.85;
-}
-
-.top-bar-right {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-/* Learn Mode Toggle Button in Top Bar */
-.btn-learn-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  background: #14171d;
-  border: 1px solid #475063;
-  color: var(--text-muted);
-  padding: 0.48rem 0.8rem;
-}
-
-.btn-learn-toggle.active {
-  background: linear-gradient(180deg, #272c37, #191d25);
-  border-color: var(--vintage-amber);
-  color: var(--vintage-cream);
-  box-shadow: 0 3px 0 #090b0e, 0 0 12px rgba(245, 158, 11, 0.28);
-}
-
-.learn-status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #475569;
-}
-
-.btn-learn-toggle.active .learn-status-dot {
-  background: var(--vintage-amber);
-  box-shadow: 0 0 8px var(--vintage-amber);
-}
-
-.hardware-status-strip {
-  display: flex;
-  align-items: center;
-  gap: 0.85rem;
-  background: #12141a;
-  border: 1px solid #323744;
-  padding: 0.45rem 0.75rem;
-  border-radius: 6px;
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.7);
-}
-
-.led-indicator {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  color: var(--text-silkscreen);
-}
-
-.led-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-
-.led-amber {
-  background: #f59e0b;
-  box-shadow: 0 0 8px #f59e0b, 0 0 14px #ea580c;
-}
-
-.led-teal {
-  background: #2dd4bf;
-  box-shadow: 0 0 8px #2dd4bf;
-}
-
-.workspace {
-  display: flex;
-  flex-direction: column;
-  gap: 1.15rem;
-}
-
-/* Floating Cursor Learn Mode Tooltip (follows mouse, non-blocking, hides off-control) */
-.learn-cursor-tooltip {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: 200;
-  width: 310px;
-  max-width: calc(100vw - 24px);
-  padding: 0.7rem 0.85rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  background: linear-gradient(180deg, rgba(35, 39, 48, 0.97) 0%, rgba(18, 21, 27, 0.97) 100%);
-  border: 1.5px solid var(--vintage-amber);
-  border-radius: 8px;
-  box-shadow:
-    0 14px 30px rgba(0, 0, 0, 0.85),
-    0 0 0 1px rgba(245, 158, 11, 0.22);
-  backdrop-filter: blur(6px);
-  pointer-events: none;
-  transition: opacity 0.14s ease;
-}
-
-.learn-cursor-tooltip.is-hidden {
-  opacity: 0;
-  visibility: hidden;
-}
-
-.learn-guide-header {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding-bottom: 0.35rem;
-  border-bottom: 1px solid #2e333f;
-}
-
-.learn-guide-header strong {
-  font-size: 0.8rem;
-  color: var(--text-cream);
-  line-height: 1.25;
-}
-
-.badge {
-  background: var(--vintage-amber);
-  color: #140d04;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-weight: 800;
-  font-size: 0.62rem;
-  letter-spacing: 0.06em;
-  padding: 0.16rem 0.42rem;
-  border-radius: 3px;
-  flex-shrink: 0;
-}
-
-.badge-rec {
-  background: var(--vintage-red);
-  color: #fffbeb;
-}
-
-.learn-tooltip-body {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-.learn-tooltip-row {
-  background: #101319;
-  border-left: 2.5px solid var(--vintage-orange);
-  border-radius: 4px;
-  padding: 0.32rem 0.55rem;
-}
-
-.learn-card-tag {
-  display: block;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.58rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  color: var(--vintage-amber);
-  margin-bottom: 0.1rem;
-}
-
-.learn-tooltip-row p {
-  font-size: 0.74rem;
-  color: #e2e8f0;
-  line-height: 1.32;
-}
-
-/* Main Hardware Panels */
-.panel {
-  padding: 1.35rem 1.5rem;
-}
-
-.panel h2 {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.96rem;
-  font-weight: 800;
-  letter-spacing: 0.1em;
-  color: var(--vintage-cream);
-  text-transform: uppercase;
-}
-
-.panel-header {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  align-items: center;
-  gap: 0.85rem;
-  margin-bottom: 1rem;
-  padding-bottom: 0.85rem;
-  border-bottom: 1px solid #323743;
-}
-
-/* Controls & Hardware Switches */
-.sequencer-toolbar,
-.sequencer-transport,
-.quantize-controls,
-.synth-quick-controls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.synth-quick-controls {
-  margin-top: 0.5rem;
-}
-
+/* ... existing code ... */
 .sequencer-transport {
   background: #14171d;
   border: 1px solid #343946;
@@ -401,673 +7,78 @@ body {
   box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.6);
 }
 
-/* Global Drum Space (Echo & Reverb) Recessed Container */
-.drum-global-space-box {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  background: #11161b;
-  border: 1px solid #234942;
-  border-top: 2px solid var(--phosphor-teal);
-  padding: 0.35rem 0.75rem;
-  border-radius: 6px;
-  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.65);
-}
-
-.control-group {
-  display: flex;
-  flex-direction: column;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.66rem;
-  font-weight: 700;
-  letter-spacing: 0.07em;
-  color: var(--text-silkscreen);
-  gap: 0.25rem;
-}
-
-input[type="number"],
-input[type="text"],
-select {
-  background: #0d1015;
-  color: var(--phosphor-teal);
-  border: 1px solid #3b4150;
-  padding: 0.38rem 0.55rem;
-  border-radius: 4px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.8rem;
-  font-weight: 700;
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.75);
-}
-
-input[type="number"] {
-  width: 72px;
-}
-
-.hardware-text-input {
-  width: 145px;
-  color: var(--text-cream);
-}
-
-.hardware-text-input::placeholder {
-  color: #64748b;
-  font-weight: 500;
-}
-
-input[type="range"] {
-  accent-color: var(--vintage-orange);
-  cursor: pointer;
-}
-
-/* Tactile Hardware Buttons */
-.btn {
-  padding: 0.5rem 0.9rem;
-  border: 1px solid #0b0d11;
-  border-top-color: rgba(255, 255, 255, 0.25);
-  border-radius: 4px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-weight: 800;
-  letter-spacing: 0.06em;
-  cursor: pointer;
-  font-size: 0.76rem;
-  box-shadow: 0 3px 0 #090b0e, 0 4px 8px rgba(0, 0, 0, 0.5);
-  transition: transform 0.06s ease, box-shadow 0.06s ease, filter 0.15s ease, opacity 0.15s ease;
-}
-
-.btn:disabled {
-  opacity: 0.42;
-  cursor: not-allowed;
-}
-
-.btn:not(:disabled):active {
-  transform: translateY(2px);
-  box-shadow: 0 1px 0 #090b0e, 0 2px 4px rgba(0, 0, 0, 0.5);
-}
-
-.btn-sm {
-  padding: 0.36rem 0.65rem;
-  font-size: 0.7rem;
-}
-
-.btn-primary {
-  background: linear-gradient(180deg, #ea580c, #c2410c);
-  color: #fffbeb;
-}
-
-.btn-primary.is-playing {
-  background: linear-gradient(180deg, #22c55e, #15803d);
-  color: #052e16;
-  box-shadow: 0 3px 0 #090b0e, 0 0 14px rgba(34, 197, 94, 0.55);
-}
-
-.btn-rec {
-  background: linear-gradient(180deg, #dc2626, #991b1b);
-  color: #fffbeb;
-}
-
-.btn-rec.is-recording {
-  background: linear-gradient(180deg, #ef4444, #b91c1c);
-  box-shadow: 0 3px 0 #090b0e, 0 0 16px rgba(239, 68, 68, 0.75);
-}
-
-.btn-amber {
-  background: linear-gradient(180deg, #f59e0b, #d97706);
-  color: #1c1103;
-}
-
-.btn-secondary {
-  background: linear-gradient(180deg, #e7dec8, #cfc3a9);
-  color: #1c1917;
-}
-
-.btn-metro {
-  background: #1b1f27;
-  border-color: #3f4654;
-  color: var(--text-muted);
-}
-
-.btn-metro.active {
-  background: linear-gradient(180deg, #f59e0b, #d97706);
-  color: #1c1103;
-  box-shadow: 0 3px 0 #090b0e, 0 0 12px rgba(245, 158, 11, 0.5);
-}
-
-.btn-ghost {
-  background: #232731;
-  border-color: #424857;
-  color: var(--text-cream);
-}
-
-/* Synthesizer Header & Dual Phosphor Display Window */
-.synth-header-bar {
+/* Multi-Section Arranger Toolbar Group */
+.section-arranger-box {
   display: flex;
   flex-wrap: wrap;
-  justify-content: space-between;
   align-items: center;
-  gap: 1rem;
-  margin-bottom: 0.95rem;
-  padding-bottom: 0.95rem;
-  border-bottom: 1px solid #323743;
-}
-
-.synth-title-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.scope-hint {
-  font-size: 0.76rem;
-  color: var(--text-muted);
-}
-
-/* Mic Sampler, Sample Chopper & Library Strip */
-.sampler-strip {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  background: #14171f;
+  gap: 0.4rem;
+  background: #14171d;
   border: 1px solid #343946;
-  border-left: 3px solid var(--vintage-red);
+  border-top: 2px solid var(--vintage-amber);
+  padding: 0.4rem 0.65rem;
   border-radius: 6px;
-  padding: 0.75rem 0.9rem;
-  margin-bottom: 1rem;
-  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.55);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.6);
 }
 
-.sampler-top-row {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  align-items: flex-end;
-  gap: 0.85rem;
-}
-
-.sampler-group {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 0.6rem;
-}
-
-.sampler-group > .badge {
-  align-self: center;
-}
-
-.rec-status-text {
-  align-self: center;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.72rem;
-  color: var(--phosphor-teal);
-  max-width: 240px;
-}
-
-.rec-status-text.recording {
-  color: #fca5a5;
-  font-weight: 700;
-}
-
-/* Interactive Sample Chopper Bar */
-.sample-chopper-bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.9rem;
-  background: #0d1016;
-  border: 1px solid #2b313e;
-  border-radius: 6px;
-  padding: 0.55rem 0.75rem;
-}
-
-.chopper-screen-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  flex: 1 1 320px;
-  min-width: 240px;
-}
-
-.chopper-screen-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.chopper-canvas {
-  width: 100%;
-  height: 54px;
-  cursor: crosshair;
-  touch-action: none;
-}
-
-.chopper-controls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.85rem;
-}
-
-.chopper-controls input[type="range"] {
-  width: 120px;
-}
-
-.chopper-controls input[type="range"]:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.chopper-btn-stack {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-}
-
-/* Unified Recessed Dual-Screen Bezel */
-.dual-display-bezel {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: stretch;
-  gap: 0.65rem;
-  background: var(--bezel-dark);
-  border: 2px solid #050709;
-  border-bottom-color: #3b414f;
-  border-right-color: #3b414f;
-  border-radius: 8px;
-  padding: 0.55rem 0.7rem;
-  box-shadow:
-    inset 0 4px 12px rgba(0, 0, 0, 0.95),
-    0 2px 6px rgba(0, 0, 0, 0.5);
-}
-
-.screen-pane {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.screen-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.scope-label {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.65rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  color: var(--phosphor-teal);
-}
-
-.screen-tag {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.6rem;
-  color: rgba(245, 158, 11, 0.85);
-}
-
-.screen-divider {
-  width: 2px;
-  background: #1f2530;
-  border-radius: 1px;
-}
-
-.phosphor-canvas {
-  display: block;
-  border-radius: 4px;
-  background: var(--screen-bg);
-  border: 1px solid #16332c;
-  box-shadow: inset 0 0 10px rgba(45, 212, 191, 0.14);
-}
-
-/* 6 Modular Analog Rack Cards */
-.modular-rack {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(195px, 1fr));
-  gap: 0.85rem;
-}
-
-.rack-module {
-  background: var(--module-face);
-  border: 1px solid #343946;
-  border-top: 3px solid var(--vintage-orange);
-  border-radius: 6px;
-  padding: 0.75rem 0.65rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 3px 8px rgba(0, 0, 0, 0.4);
-  transition: opacity 0.2s ease, filter 0.2s ease;
-}
-
-.rack-module.bypassed {
-  opacity: 0.46;
-  filter: grayscale(0.7);
-}
-
-.module-cream { border-top-color: var(--vintage-cream); }
-.module-blue { border-top-color: var(--mod-blue); }
-.module-purple { border-top-color: var(--mod-purple); }
-.module-orange { border-top-color: var(--vintage-orange); }
-.module-amber { border-top-color: var(--vintage-amber); }
-.module-teal { border-top-color: var(--phosphor-teal); }
-
-.module-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 0.35rem;
-  padding-bottom: 0.4rem;
-  border-bottom: 1px solid #2b303c;
-}
-
-.module-title {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.72rem;
-  font-weight: 800;
-  letter-spacing: 0.06em;
-  color: var(--text-cream);
-}
-
-.module-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-}
-
-.bypass-btn,
-.mode-toggle-btn {
+.section-box-label {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.64rem;
   font-weight: 800;
-  padding: 0.16rem 0.42rem;
-  border-radius: 3px;
-  border: 1px solid #3e4554;
-  background: #111419;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-
-.bypass-btn.active {
-  background: #22c55e;
-  color: #052e16;
-  border-color: #86efac;
-  box-shadow: 0 0 8px rgba(34, 197, 94, 0.45);
-}
-
-.mode-toggle-btn {
-  background: rgba(168, 85, 247, 0.22);
-  border-color: var(--mod-purple);
-  color: #f3e8ff;
-}
-
-.module-mini-select {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.62rem;
-  font-weight: 800;
-  padding: 0.14rem 0.28rem;
-  border-radius: 3px;
-  background: #0d1015;
-  color: var(--phosphor-teal);
-  border: 1px solid #2dd4bf66;
-  cursor: pointer;
-}
-
-.module-knobs {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-around;
-  gap: 0.55rem;
-}
-
-/* Fluted Vintage Hardware Potentiometer Knobs */
-.knob-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1.35rem;
-  align-items: center;
-}
-
-.knob-unit {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.25rem;
-  user-select: none;
-  min-width: 52px;
-}
-
-.knob-dial {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  background:
-    repeating-conic-gradient(
-      from 0deg,
-      #14171d 0deg 10deg,
-      #343946 10deg 20deg
-    );
-  border: 2px solid #0b0d12;
-  padding: 4px;
-  position: relative;
-  cursor: ns-resize;
-  box-shadow:
-    0 5px 8px rgba(0, 0, 0, 0.75),
-    0 1px 0 rgba(255, 255, 255, 0.14);
-}
-
-.knob-cap {
-  width: 100%;
-  height: 100%;
-  border-radius: 50%;
-  background: radial-gradient(circle at 35% 30%, #4b5262, #1c2028 75%, #111318 100%);
-  border: 1px solid #5c6475;
-  position: relative;
-  box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.25);
-}
-
-.knob-indicator {
-  width: 3px;
-  height: 13px;
-  background: var(--vintage-orange);
-  position: absolute;
-  top: 2px;
-  left: 50%;
-  transform: translateX(-50%);
-  border-radius: 1.5px;
-  box-shadow: 0 0 4px rgba(255, 255, 255, 0.35);
-}
-
-.knob-label {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--text-cream);
-}
-
-.knob-value {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.66rem;
+  letter-spacing: 0.08em;
   color: var(--vintage-amber);
-  font-variant-numeric: tabular-nums;
+  margin-right: 0.15rem;
 }
 
-/* Mini Volume & Toolbar Knobs */
-.mini-knob {
-  min-width: 36px;
-}
-
-.mini-knob .knob-dial {
-  width: 30px;
-  height: 30px;
-  padding: 3px;
-}
-
-.mini-knob .knob-indicator {
-  width: 2px;
-  height: 8px;
-  top: 1px;
-}
-
-.mini-knob .knob-label {
-  font-size: 0.6rem;
-}
-
-.mini-knob .knob-value {
-  font-size: 0.6rem;
-}
-
-/* Drum Voice Shaping Strip */
-.drum-editor {
-  background: #151820;
-  border: 1px solid #323744;
-  border-radius: 6px;
-  padding: 0.85rem 1rem;
-  margin-bottom: 0.8rem;
-  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.5);
-}
-
-.drum-editor-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 0.7rem;
-  gap: 0.5rem;
-}
-
-.drum-editor-header strong {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.84rem;
-  color: var(--text-cream);
-}
-
-.status-note {
-  font-size: 0.78rem;
-  color: var(--text-muted);
-  margin-bottom: 0.85rem;
-}
-
-/* Sequencer Grid & Classic TR-808 Backlit Rubber Step Pads */
-.sequencer-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 0.55rem;
-  overflow-x: auto;
-  padding-bottom: 0.35rem;
-}
-
-.track-row {
+.section-tabs {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  min-width: 960px;
-  padding: 0.4rem 0.5rem;
-  background: #171a22;
-  border-radius: 6px;
-  border: 1px solid #2b303d;
-  transition: opacity 0.15s ease, border-color 0.15s ease;
+  gap: 0.28rem;
 }
 
-.track-row.selected-track {
-  background: #1e232e;
-  border-color: var(--vintage-orange);
-  box-shadow: inset 0 0 12px rgba(234, 88, 12, 0.15);
-}
-
-.track-row.track-dimmed {
-  opacity: 0.42;
-}
-
-.track-meta {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  width: 410px;
-  flex-shrink: 0;
-}
-
-.track-select-btn {
-  background: #101318;
-  color: var(--text-cream);
-  border: 1px solid #383e4d;
+.section-tab-btn {
+  min-width: 28px;
+  height: 26px;
+  padding: 0 0.45rem;
   border-radius: 4px;
-  padding: 0.36rem 0.5rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.75rem;
-  font-weight: 800;
-  width: 86px;
-  text-align: left;
-  cursor: pointer;
-}
-
-/* Mute (M) & Solo (S) Buttons */
-.ms-btn-group {
-  display: flex;
-  gap: 3px;
-}
-
-.ms-btn {
-  width: 22px;
-  height: 24px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.68rem;
-  font-weight: 800;
-  border-radius: 3px;
-  border: 1px solid #3a404f;
-  background: #11141a;
+  border: 1px solid #3f4654;
+  background: #101319;
   color: var(--text-muted);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.ms-btn:hover {
-  border-color: var(--text-cream);
-  color: var(--text-cream);
-}
-
-.mute-btn.active {
-  background: var(--vintage-red);
-  border-color: #fca5a5;
-  color: #ffffff;
-  box-shadow: 0 0 8px rgba(220, 38, 38, 0.6);
-}
-
-.solo-btn.active {
-  background: var(--vintage-amber);
-  border-color: #fde68a;
-  color: #1c1103;
-  box-shadow: 0 0 8px rgba(245, 158, 11, 0.6);
-}
-
-.track-preset-select {
-  width: 102px;
-  padding: 0.3rem 0.35rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.72rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all 0.1s ease;
 }
 
-.track-mini-scope {
-  width: 96px;
-  height: 38px;
-  background: var(--screen-bg);
-  border: 1px solid #1e3b34;
-  border-radius: 4px;
-  flex-shrink: 0;
+.section-tab-btn:hover {
+  border-color: var(--vintage-cream);
+  color: var(--text-cream);
 }
 
-.steps-container {
-  display: grid;
-  gap: 5px;
-  flex: 1;
+.section-tab-btn.active {
+  background: linear-gradient(180deg, #ea580c, #c2410c);
+  border-color: #fdba74;
+  color: #fffbeb;
+  box-shadow: 0 0 10px rgba(234, 88, 12, 0.45);
 }
 
+.section-tab-btn.chained-playing {
+  outline: 2px solid var(--phosphor-teal);
+  outline-offset: 1px;
+}
+
+.btn-xs {
+  padding: 0.28rem 0.5rem;
+  font-size: 0.65rem;
+}
+
+/* Global Drum Space (Echo & Reverb) Recessed Container */
+/* ... existing code ... */
 /* Classic TR-808 Style Backlit Rubber Step Buttons */
 .step-btn {
   position: relative;
-  height: 42px;
+  height: 46px;
   border-radius: 4px;
   border: 1px solid #0a0c10;
   border-top-color: rgba(255, 255, 255, 0.25);
@@ -1075,57 +86,29 @@ input[type="range"] {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: flex-start;
-  padding-top: 5px;
+  justify-content: space-between;
+  padding: 4px 2px 3px;
+  overflow: hidden;
+  user-select: none;
   box-shadow:
     0 3px 0 #090b0f,
     inset 0 1px 1px rgba(255, 255, 255, 0.2);
   transition: transform 0.05s ease, filter 0.1s ease, box-shadow 0.1s ease;
 }
 
+.step-btn.active {
+  cursor: ns-resize;
+}
+
 .step-btn:active {
   transform: translateY(2px);
   box-shadow: 0 1px 0 #090b0f;
 }
-
-/* Color-coded 4-step banks (Red, Orange, Amber, Cream) */
-.step-btn.bank-red {
-  background: linear-gradient(180deg, #692323 0%, #4a1717 100%);
-}
-.step-btn.bank-orange {
-  background: linear-gradient(180deg, #733617 0%, #52240e 100%);
-}
-.step-btn.bank-amber {
-  background: linear-gradient(180deg, #735317 0%, #523a0e 100%);
-}
-.step-btn.bank-cream {
-  background: linear-gradient(180deg, #635e52 0%, #47433a 100%);
-}
-
-/* Active Illuminated Step Caps */
-.step-btn.bank-red.active {
-  background: linear-gradient(180deg, #ef4444 0%, #b91c1c 100%);
-  box-shadow: 0 3px 0 #090b0f, 0 0 12px rgba(239, 68, 68, 0.55);
-}
-.step-btn.bank-orange.active {
-  background: linear-gradient(180deg, #f97316 0%, #c2410c 100%);
-  box-shadow: 0 3px 0 #090b0f, 0 0 12px rgba(249, 115, 22, 0.55);
-}
-.step-btn.bank-amber.active {
-  background: linear-gradient(180deg, #f59e0b 0%, #b45309 100%);
-  box-shadow: 0 3px 0 #090b0f, 0 0 12px rgba(245, 158, 11, 0.55);
-}
-.step-btn.bank-cream.active {
-  background: linear-gradient(180deg, #f5efe6 0%, #d6cbb5 100%);
-  box-shadow: 0 3px 0 #090b0f, 0 0 12px rgba(245, 239, 230, 0.55);
-}
-
-.step-btn.beat-start {
-  margin-left: 3px;
-}
-
+/* ... existing code ... */
 /* Top LED Diode on Every Step Pad */
 .step-led {
+  position: relative;
+  z-index: 2;
   width: 9px;
   height: 4px;
   border-radius: 1.5px;
@@ -1136,6 +119,40 @@ input[type="range"] {
 .step-btn.active .step-led {
   background: #fffbeb;
   box-shadow: 0 0 6px #ffffff, 0 0 10px #f59e0b;
+}
+
+/* Vertical Velocity Meter Fill & Readout inside Active Step Pads */
+.step-vel-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 0%;
+  background: rgba(255, 255, 255, 0.22);
+  border-top: 1.5px solid rgba(255, 251, 235, 0.85);
+  pointer-events: none;
+  z-index: 1;
+  transition: height 0.04s linear;
+}
+
+.step-btn:not(.active) .step-vel-fill {
+  display: none;
+}
+
+.step-vel-tag {
+  position: relative;
+  z-index: 2;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.56rem;
+  font-weight: 800;
+  line-height: 1;
+  color: rgba(15, 18, 24, 0.92);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.35);
+  pointer-events: none;
+}
+
+.step-btn:not(.active) .step-vel-tag {
+  display: none;
 }
 
 /* Playhead Sweep Highlight */
