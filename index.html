@@ -8,7 +8,7 @@
 </head>
 <body>
   <div class="chassis-wrapper">
-    <!-- Top Header Bar -->
+    <!-- Top Header Bar with Cal Mascot & Speech Bubble -->
     <header class="top-bar-sticky-wrap">
       <div class="top-bar hardware-panel">
         <span class="screw tl" aria-hidden="true"></span>
@@ -16,22 +16,144 @@
         <span class="screw bl" aria-hidden="true"></span>
         <span class="screw br" aria-hidden="true"></span>
 
-        <div class="brand-plate">
-          <div class="logo-badge" aria-hidden="true">
-            <svg width="46" height="34" viewBox="0 0 46 34" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <rect x="1" y="1" width="44" height="32" rx="4" fill="#081210" stroke="#ea580c" stroke-width="1.5"/>
-              <line x1="5" y1="17" x2="41" y2="17" stroke="#134e4a" stroke-width="1" stroke-dasharray="2 2"/>
-              <path d="M5 17 C 10 4, 15 4, 19 17 C 23 30, 28 30, 32 17 C 35 8, 38 8, 41 17" stroke="#2dd4bf" stroke-width="2.2" stroke-linecap="round" fill="none"/>
-              <circle cx="40" cy="6" r="2" fill="#f59e0b"/>
-            </svg>
-          </div>
-          <div class="logo-text-group">
-            <div class="logo-title-row">
-              <h1 class="retro-logo-title">WAVECRAFT</h1>
-              <span class="model-badge">MODEL WC-808</span>
+        <div class="brand-and-cal-group">
+          <div class="brand-plate">
+            <div class="logo-badge" aria-hidden="true">
+              <svg width="46" height="34" viewBox="0 0 46 34" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="1" y="1" width="44" height="32" rx="4" fill="#081210" stroke="#ea580c" stroke-width="1.5"/>
+                <line x1="5" y1="17" x2="41" y2="17" stroke="#134e4a" stroke-width="1" stroke-dasharray="2 2"/>
+                <path d="M5 17 C 10 4, 15 4, 19 17 C 23 30, 28 30, 32 17 C 35 8, 38 8, 41 17" stroke="#2dd4bf" stroke-width="2.2" stroke-linecap="round" fill="none"/>
+                <circle cx="40" cy="6" r="2" fill="#f59e0b"/>
+              </svg>
             </div>
-            <div class="pinstripe-bar" aria-hidden="true"></div>
-            <span class="subtitle">PROGRAMMABLE RHYTHM &amp; WAVE SYNTHESIZER</span>
+            <div class="logo-text-group">
+              <div class="logo-title-row">
+                <h1 class="retro-logo-title">WAVECRAFT</h1>
+                <span class="model-badge">MODEL WC-808</span>
+              </div>
+              <div class="pinstripe-bar" aria-hidden="true"></div>
+              <span class="subtitle">PROGRAMMABLE RHYTHM &amp; WAVE SYNTHESIZER</span>
+            </div>
+          </div>
+
+          <!-- Animated Mascot "Cal" + Speech Bubble (visible when LEARN MODE is ON) -->
+          <div id="cal-companion" class="cal-companion is-visible" aria-live="polite">
+            <div class="cal-avatar-stage" id="cal-avatar-stage" title="Cal — Your WC-808 Sound Design Buddy">
+              <svg class="cal-svg" viewBox="0 0 110 110" width="66" height="66" xmlns="http://www.w3.org/2000/svg">
+                <!-- Beat Accent Lines (shown when grooving to drums) -->
+                <g class="cal-beat-lines" stroke="#f59e0b" stroke-width="3" stroke-linecap="round">
+                  <line x1="20" y1="16" x2="13" y2="8" />
+                  <line x1="32" y1="11" x2="29" y2="2" />
+                </g>
+
+                <!-- Hoodie Body & Arms (WC-808 Dark Steel + Vintage Orange Trim) -->
+                <g class="cal-body-group">
+                  <!-- Legs -->
+                  <rect x="37" y="88" width="14" height="12" rx="5" fill="#f5efe6" stroke="#111318" stroke-width="3"/>
+                  <rect x="59" y="88" width="14" height="12" rx="5" fill="#f5efe6" stroke="#111318" stroke-width="3"/>
+
+                  <!-- Hoodie Torso -->
+                  <path d="M31 64 C31 56, 79 56, 79 64 L82 88 C82 92, 28 92, 28 88 Z" fill="#21252f" stroke="#111318" stroke-width="3"/>
+                  <!-- Front Kangaroo Pocket -->
+                  <path d="M40 76 L70 76 L72 88 L38 88 Z" fill="#181b22" stroke="#111318" stroke-width="2.2" stroke-linejoin="round"/>
+                  <!-- Orange/Amber Hoodie Drawstrings -->
+                  <line x1="48" y1="63" x2="48" y2="73" stroke="#ea580c" stroke-width="2.6" stroke-linecap="round"/>
+                  <line x1="62" y1="63" x2="62" y2="73" stroke="#f59e0b" stroke-width="2.6" stroke-linecap="round"/>
+
+                  <!-- Left Arm (resting in pocket) -->
+                  <path d="M32 65 C24 68, 25 81, 35 82" fill="#21252f" stroke="#111318" stroke-width="3" stroke-linecap="round"/>
+
+                  <!-- Right Arm Idle (resting in pocket) -->
+                  <path class="cal-arm-idle" d="M78 65 C86 68, 85 81, 75 82" fill="#21252f" stroke="#111318" stroke-width="3" stroke-linecap="round"/>
+
+                  <!-- Right Arm DJ Pose (raised hand holding right headphone earcup) -->
+                  <g class="cal-arm-dj">
+                    <path d="M77 65 C92 64, 98 53, 91 44" fill="none" stroke="#21252f" stroke-width="8" stroke-linecap="round"/>
+                    <path d="M77 65 C92 64, 98 53, 91 44" fill="none" stroke="#111318" stroke-width="3" stroke-linecap="round"/>
+                    <circle cx="90" cy="43" r="6" fill="#f5efe6" stroke="#111318" stroke-width="2.6"/>
+                  </g>
+                </g>
+
+                <!-- Head, Backwards Cap, Headphones & Expressive Eyes (bobs to beat) -->
+                <g class="cal-head-group">
+                  <!-- Backwards Cap Brim (pointing left) -->
+                  <path d="M23 33 C11 33, 8 39, 17 41 L27 39 Z" fill="#ea580c" stroke="#111318" stroke-width="2.8" stroke-linejoin="round"/>
+
+                  <!-- Main Chibi Head -->
+                  <rect x="25" y="18" width="60" height="47" rx="23" fill="#f5efe6" stroke="#111318" stroke-width="3"/>
+
+                  <!-- Cap Crown & Snapback Strap -->
+                  <path d="M25 36 C25 16, 85 16, 85 36 C73 30, 37 30, 25 36 Z" fill="#21252f" stroke="#111318" stroke-width="3" stroke-linejoin="round"/>
+                  <path d="M46 31 C46 25, 64 25, 64 31 Z" fill="#f5efe6" stroke="#111318" stroke-width="2"/>
+                  <rect x="48" y="29" width="14" height="4" rx="1.5" fill="#f59e0b" stroke="#111318" stroke-width="1.5"/>
+
+                  <!-- Headphone Band -->
+                  <path d="M22 41 C20 12, 90 12, 88 41" fill="none" stroke="#151820" stroke-width="4.5" stroke-linecap="round"/>
+
+                  <!-- Left & Right Studio Headphone Earcups -->
+                  <rect x="15" y="32" width="12" height="22" rx="6" fill="#2b3242" stroke="#111318" stroke-width="2.8"/>
+                  <rect x="18" y="36" width="5" height="14" rx="2.5" fill="#2dd4bf"/>
+
+                  <rect x="83" y="32" width="12" height="22" rx="6" fill="#2b3242" stroke="#111318" stroke-width="2.8"/>
+                  <rect x="87" y="36" width="5" height="14" rx="2.5" fill="#2dd4bf"/>
+
+                  <!-- Rosy Cheek Blush Marks -->
+                  <line x1="35" y1="53" x2="38" y2="50" stroke="#fb923c" stroke-width="2" stroke-linecap="round"/>
+                  <line x1="39" y1="54" x2="42" y2="51" stroke="#fb923c" stroke-width="2" stroke-linecap="round"/>
+                  <line x1="69" y1="53" x2="72" y2="50" stroke="#fb923c" stroke-width="2" stroke-linecap="round"/>
+                  <line x1="73" y1="54" x2="76" y2="51" stroke="#fb923c" stroke-width="2" stroke-linecap="round"/>
+
+                  <!-- STATE 1: Default Cute Dot Eyes -->
+                  <g class="cal-eyes-normal">
+                    <circle cx="43" cy="45" r="3.6" fill="#111318"/>
+                    <circle cx="67" cy="45" r="3.6" fill="#111318"/>
+                  </g>
+
+                  <!-- STATE 2: Closed Happy DJ Eyes (> <) when grooving to drums -->
+                  <g class="cal-eyes-dj" fill="none" stroke="#111318" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="38,42 45,45 38,48"/>
+                    <polyline points="72,42 65,45 72,48"/>
+                  </g>
+
+                  <!-- STATE 3: Spinning Hypno Spiral Eyes when Synth notes play -->
+                  <g class="cal-eyes-spiral">
+                    <g class="cal-spiral-left">
+                      <circle cx="43" cy="45" r="6.2" fill="#06110e" stroke="#2dd4bf" stroke-width="1.4"/>
+                      <path d="M43 45 C43 43.2, 45.2 43.2, 45.2 45 C45.2 47.4, 41.2 47.4, 41.2 45 C41.2 41.6, 47.2 41.6, 47.2 45" fill="none" stroke="#f59e0b" stroke-width="1.6" stroke-linecap="round"/>
+                    </g>
+                    <g class="cal-spiral-right">
+                      <circle cx="67" cy="45" r="6.2" fill="#06110e" stroke="#2dd4bf" stroke-width="1.4"/>
+                      <path d="M67 45 C67 43.2, 69.2 43.2, 69.2 45 C69.2 47.4, 65.2 47.4, 65.2 45 C65.2 41.6, 71.2 41.6, 71.2 45" fill="none" stroke="#f59e0b" stroke-width="1.6" stroke-linecap="round"/>
+                    </g>
+                  </g>
+
+                  <!-- Cute Smile -->
+                  <path class="cal-mouth-smile" d="M51 50 Q55 54 59 50" fill="none" stroke="#111318" stroke-width="2.4" stroke-linecap="round"/>
+                </g>
+              </svg>
+            </div>
+
+            <!-- Cal's Speech Bubble -->
+            <div id="cal-speech-bubble" class="cal-speech-bubble" role="status">
+              <div class="cal-bubble-header">
+                <span class="cal-name-tag">CAL • SOUND GUIDE</span>
+                <strong id="learn-title">Welcome to WaveCraft WC-808!</strong>
+              </div>
+              <div class="cal-bubble-grid">
+                <div class="cal-bubble-item">
+                  <span class="learn-card-tag">WHAT IT IS</span>
+                  <p id="learn-what">Hover over any knob, button, or screen to see what it does.</p>
+                </div>
+                <div class="cal-bubble-item">
+                  <span class="learn-card-tag">LISTEN FOR</span>
+                  <p id="learn-listen">Press START / STOP for drums or hold keys A–K for synth chords.</p>
+                </div>
+                <div class="cal-bubble-item">
+                  <span class="learn-card-tag">WATCH WAVE</span>
+                  <p id="learn-watch">Watch the phosphor screens respond live as you sculpt your sound.</p>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -41,7 +163,7 @@
             id="learn-toggle-btn"
             class="btn btn-learn-toggle active"
             aria-pressed="true"
-            title="Toggle floating cursor sound-design tooltips on or off"
+            title="Show or hide Cal and his sound-design speech bubble"
           >
             <span class="learn-status-dot" aria-hidden="true"></span>
             <span id="learn-toggle-text">LEARN MODE: ON</span>
@@ -380,28 +502,6 @@
       </section>
     </main>
   </div>
-
-  <!-- Floating Cursor Sound Design Tooltip (follows mouse when Learn Mode is ON) -->
-  <aside id="learn-drawer" class="learn-cursor-tooltip is-hidden" role="tooltip" aria-live="polite">
-    <div class="learn-guide-header">
-      <span class="badge">LEARN MODE</span>
-      <strong id="learn-title">Sound Design Guide</strong>
-    </div>
-    <div class="learn-tooltip-body">
-      <div class="learn-tooltip-row">
-        <span class="learn-card-tag">WHAT IT IS</span>
-        <p id="learn-what">Every control shapes the pitch, volume envelope, frequency balance, or room space of your sound.</p>
-      </div>
-      <div class="learn-tooltip-row">
-        <span class="learn-card-tag">LISTEN FOR</span>
-        <p id="learn-listen">Listen for changes in brightness, punch, grit, or echo tails.</p>
-      </div>
-      <div class="learn-tooltip-row">
-        <span class="learn-card-tag">WATCH WAVE</span>
-        <p id="learn-watch">Watch the waveform preview and live EQ curve update live.</p>
-      </div>
-    </div>
-  </aside>
 
   <!-- Load data first, then main logic -->
   <script src="1_data/data.js"></script>

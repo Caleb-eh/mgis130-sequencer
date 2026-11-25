@@ -2,7 +2,7 @@
 // PROCESSING & PRESENTATION: Studio-grade gain-staged Web Audio engine (isolated Drum Bus Limiter
 // vs. Synth Dynamics/Gate), multi-stage analog drum synthesis (6-oscillator metallic hats/cymbals,
 // multi-burst claps, Open Hat choke), stereo-widened 4x-oversampled polyphonic synthesizer,
-// Mic Sampler & Chopper, Multi-Section Arranger, and Floating Cursor Learn Mode.
+// Mic Sampler & Chopper, Multi-Section Arranger with seamless live chaining, and animated "Cal" mascot.
 
 let audioCtx = null;
 let noiseBuffer = null;
@@ -10,7 +10,6 @@ let reverbImpulseBuffer = null;
 let isPlaying = false;
 let metronomeEnabled = false;
 let learnModeEnabled = true;
-let isHoveringLearnTarget = false;
 
 // Lookahead Web Audio Scheduler state
 let currentScheduleStep = 0;
@@ -124,6 +123,7 @@ const drumGlobalSpace = {
 const SECTION_LETTERS = ["A", "B", "C", "D", "E", "F", "G", "H"];
 let sections = []; // Array of { id, name, stepCount, grid }
 let activeSectionIndex = 0;
+let schedulingSectionIndex = 0; // Tracks which section the Web Audio lookahead is currently scheduling
 let chainSectionsEnabled = false;
 
 // Modular Rack State
@@ -214,39 +214,35 @@ const chopEndVal = document.getElementById("chop-end-val");
 const resetChopBtn = document.getElementById("reset-chop-btn");
 const applyChopBtn = document.getElementById("apply-chop-btn");
 
-// Floating Cursor Sound Design Tooltip DOM elements
+// Cal Mascot & Speech Bubble DOM Elements
 const learnToggleBtn = document.getElementById("learn-toggle-btn");
 const learnToggleText = document.getElementById("learn-toggle-text");
-const learnDrawer = document.getElementById("learn-drawer");
+const calCompanion = document.getElementById("cal-companion");
+const calAvatarStage = document.getElementById("cal-avatar-stage");
 const learnTitle = document.getElementById("learn-title");
 const learnWhat = document.getElementById("learn-what");
 const learnListen = document.getElementById("learn-listen");
 const learnWatch = document.getElementById("learn-watch");
 
-function refreshLearnTooltipVisibility() {
-  if (!learnDrawer) return;
-  const shouldShow = learnModeEnabled && isHoveringLearnTarget;
-  learnDrawer.classList.toggle("is-hidden", !shouldShow);
+// ============================================================================
+// CAL MASCOT ANIMATION & LEARN MODE SPEECH BUBBLE CONTROLLER
+// ============================================================================
+
+function syncCalBeatTempo() {
+  if (!calAvatarStage) return;
+  const bpm = Math.max(60, Math.min(200, Number(bpmInput ? bpmInput.value : 120) || 120));
+  const beatDurationSec = 60 / bpm;
+  calAvatarStage.style.setProperty("--cal-beat-duration", `${beatDurationSec.toFixed(3)}s`);
 }
 
-function positionLearnTooltipNearCursor(clientX, clientY) {
-  if (!learnDrawer || !learnModeEnabled) return;
-  const offset = 18;
-  const rect = learnDrawer.getBoundingClientRect();
-  const tipWidth = rect.width || 310;
-  const tipHeight = rect.height || 175;
-
-  let left = clientX + offset;
-  let top = clientY + offset;
-
-  if (left + tipWidth > window.innerWidth - 12) {
-    left = Math.max(12, clientX - tipWidth - offset);
+function updateCalAnimationState() {
+  if (!calAvatarStage) return;
+  const isSynthActive = activePolyVoices.size > 0;
+  calAvatarStage.classList.toggle("is-synth-playing", isSynthActive);
+  calAvatarStage.classList.toggle("is-drum-grooving", isPlaying);
+  if (isPlaying) {
+    syncCalBeatTempo();
   }
-  if (top + tipHeight > window.innerHeight - 12) {
-    top = Math.max(12, clientY - tipHeight - offset);
-  }
-
-  learnDrawer.style.transform = `translate3d(${Math.round(left)}px, ${Math.round(top)}px, 0)`;
 }
 
 function setLearnModeEnabled(enabled) {
@@ -258,28 +254,24 @@ function setLearnModeEnabled(enabled) {
   if (learnToggleText) {
     learnToggleText.textContent = learnModeEnabled ? "LEARN MODE: ON" : "LEARN MODE: OFF";
   }
-  refreshLearnTooltipVisibility();
+  if (calCompanion) {
+    calCompanion.classList.toggle("is-visible", learnModeEnabled);
+    calCompanion.classList.toggle("is-hidden", !learnModeEnabled);
+  }
 }
 
 function updateSoundDesignGuide({ title, what, listen, watch }) {
   if (learnTitle && title) learnTitle.textContent = title;
   if (learnWhat && what) learnWhat.textContent = what;
   if (learnListen && listen) learnListen.textContent = listen;
-  if (learnWatch && watch) watch.textContent = watch;
+  if (learnWatch && watch) learnWatch.textContent = watch;
 }
 
 function attachLearnHoverHandlers(element, getGuidePayload) {
   if (!element) return;
-  element.addEventListener("mouseenter", (e) => {
+  element.addEventListener("mouseenter", () => {
     const payload = typeof getGuidePayload === "function" ? getGuidePayload() : getGuidePayload;
     if (payload) updateSoundDesignGuide(payload);
-    isHoveringLearnTarget = true;
-    refreshLearnTooltipVisibility();
-    positionLearnTooltipNearCursor(e.clientX, e.clientY);
-  });
-  element.addEventListener("mouseleave", () => {
-    isHoveringLearnTarget = false;
-    refreshLearnTooltipVisibility();
   });
 }
 
@@ -1281,13 +1273,11 @@ function makeDistortionCurve(amount) {
   return curve;
 }
 
-// Stereo-decorrelated Hall Reverb Impulse with early reflections and progressive HF damping
 function createReverbImpulse(ctx, duration = 2.2, decay = 2.2) {
   const sampleRate = ctx.sampleRate;
   const length = Math.floor(sampleRate * duration);
   const impulse = ctx.createBuffer(2, length, sampleRate);
 
-  // Early reflection tap times (in seconds) with distinct L/R offsets for wide stereo space
   const earlyTapsL = [0.011, 0.023, 0.037, 0.053, 0.071];
   const earlyTapsR = [0.014, 0.027, 0.041, 0.059, 0.079];
 
@@ -1295,7 +1285,6 @@ function createReverbImpulse(ctx, duration = 2.2, decay = 2.2) {
     const channelData = impulse.getChannelData(ch);
     const taps = ch === 0 ? earlyTapsL : earlyTapsR;
 
-    // Seed discrete stereo early reflections
     taps.forEach((tapSec, idx) => {
       const tapSample = Math.floor(tapSec * sampleRate);
       if (tapSample < length) {
@@ -1304,18 +1293,15 @@ function createReverbImpulse(ctx, duration = 2.2, decay = 2.2) {
       }
     });
 
-    // Progressive one-pole low-pass damping state so high frequencies absorb naturally over time
     let lpState = 0;
     for (let i = 0; i < length; i++) {
       const progress = i / length;
       const env = Math.pow(1 - progress, decay);
       const white = (Math.random() * 2 - 1) * env;
 
-      // Damping coefficient tightens smoothly as the reverb tail decays
       const dampAlpha = Math.max(0.08, 0.68 * (1 - progress * 0.85));
       lpState += dampAlpha * (white - lpState);
 
-      // Blend crisp early reflections with warm damped diffuse tail
       channelData[i] = channelData[i] * 0.65 + lpState * 0.72;
     }
   }
@@ -1327,7 +1313,6 @@ function initAudio() {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     audioCtx = new AudioContextClass();
 
-    // 4-second white noise buffer so randomized start offsets prevent phase cancellation
     const bufferSize = audioCtx.sampleRate * 4;
     noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
     const data = noiseBuffer.getChannelData(0);
@@ -1337,7 +1322,6 @@ function initAudio() {
 
     reverbImpulseBuffer = createReverbImpulse(audioCtx);
 
-    // Master Output & 3-Band EQ Bus
     masterBusGain = audioCtx.createGain();
     masterBusGain.gain.value = 0.88;
     masterBusGain.connect(audioCtx.destination);
@@ -1363,7 +1347,6 @@ function initAudio() {
     eqSpectrumData = new Uint8Array(eqSpectrumAnalyser.frequencyBinCount);
 
     // 1. SYNTH-ISOLATED SPACE & DYNAMICS BUS
-    // (Drive, Compression, Noise Gate, Echo & Reverb shape ONLY the Synthesizer so drums stay punchy)
     synthSpaceInputBus = audioCtx.createGain();
     synthDryGain = audioCtx.createGain();
     synthDryGain.gain.value = 1.0;
@@ -1396,7 +1379,6 @@ function initAudio() {
     gateGainNode = audioCtx.createGain();
     gateGainNode.gain.value = 1.0;
 
-    // Wire Synth Space -> Synth Dynamics (4x Drive -> 9kHz Smooth -> Compressor -> Gate) -> 3-Band EQ
     synthSpaceInputBus.connect(synthDryGain);
     synthDryGain.connect(synthDynamicsInputBus);
 
@@ -1418,7 +1400,6 @@ function initAudio() {
     gateGainNode.connect(eqBassFilter);
 
     // 2. DEDICATED DRUM BUS WITH TRANSPARENT PEAK LIMITER
-    // (Prevents loud Kicks from ducking Hi-Hats/Snares and keeps drum transients un-gated)
     drumBusInput = audioCtx.createGain();
     drumBusInput.gain.value = 0.95;
 
@@ -1968,7 +1949,6 @@ function recalculateStaticWaveform(channelId) {
         env = tNorm > 0.9 ? Math.max(0, 1 - (tNorm - 0.9) / 0.1) : 1.0;
       }
 
-      // Multi-burst envelope preview for Claps
       if (!isSample && s.engine === "clap" && tNorm < 0.14) {
         const burst = Math.abs(Math.sin(tNorm * Math.PI * 22));
         env *= 0.45 + 0.55 * burst;
@@ -1978,7 +1958,6 @@ function recalculateStaticWaveform(channelId) {
       if (isSample && sampleObj && sampleObj.peaks) {
         raw = samplePeakArray(sampleObj.peaks, tNorm);
       } else if (s.engine === "metallic") {
-        // 6-oscillator metallic shimmer preview
         const ratios = [1.0, 1.483, 1.932, 2.546, 3.012, 3.847];
         let metalSum = 0;
         for (let r = 0; r < ratios.length; r++) {
@@ -2106,10 +2085,8 @@ function isTrackAudible(trackId) {
 }
 
 function connectDrumTrackOutput(outputNode, trackSettings, startTime) {
-  // Dry drum signal goes straight to the dedicated Drum Bus Limiter (never gated/ducked by Synth!)
   outputNode.connect(drumBusInput);
 
-  // Per-track Echo send -> Drum Delay Bus (scaled by Global Drum Echo knob)
   const trackEchoAmt = (trackSettings.echo || 0) / 100;
   if (trackEchoAmt > 0.005 && drumDelayInputBus) {
     const echoSend = audioCtx.createGain();
@@ -2118,7 +2095,6 @@ function connectDrumTrackOutput(outputNode, trackSettings, startTime) {
     echoSend.connect(drumDelayInputBus);
   }
 
-  // Per-track Reverb send -> Drum Reverb Bus (scaled by Global Drum Reverb knob)
   const trackReverbAmt = (trackSettings.reverb || 0) / 100;
   if (trackReverbAmt > 0.005 && drumReverbInputBus) {
     const reverbSend = audioCtx.createGain();
@@ -2131,7 +2107,6 @@ function connectDrumTrackOutput(outputNode, trackSettings, startTime) {
 function createNoiseSourceWithRandomOffset(startTime, durationSec) {
   const noise = audioCtx.createBufferSource();
   noise.buffer = noiseBuffer;
-  // Randomize start offset inside the 4-second noise buffer so simultaneous hits never phase-cancel
   const maxOffset = Math.max(0.1, noiseBuffer.duration - durationSec - 0.1);
   const randomOffset = Math.random() * Math.min(2.5, maxOffset);
   noise.start(startTime, randomOffset);
@@ -2180,7 +2155,6 @@ async function playDrumSound(trackId, when = null, ignoreMuteSolo = false, stepV
   const startTime = when !== null ? when : audioCtx.currentTime;
   const attack = Math.max(0.001, s.attack);
 
-  // Closed Hat automatically chokes any ringing Open Hat just like real hi-hat pedals
   if (trackId === "hihat") {
     chokeActiveOpenHat(startTime);
   }
@@ -2203,7 +2177,7 @@ async function playDrumSound(trackId, when = null, ignoreMuteSolo = false, stepV
   midCutFilter.connect(highCutFilter);
   connectDrumTrackOutput(highCutFilter, s, startTime);
 
-  // Branch A: Saved Mic Sample assigned to this drum track (carries its saved Sound Design!)
+  // Branch A: Saved Mic Sample assigned to this drum track
   if (s.presetKey && s.presetKey.startsWith("sample:")) {
     const sampleObj = getSampleById(s.presetKey);
     if (!sampleObj) return;
@@ -2357,7 +2331,6 @@ async function playDrumSound(trackId, when = null, ignoreMuteSolo = false, stepV
   const engine = s.engine || "tom";
   triggerWaveformPlayhead(trackId, startTime, Math.max(0.12, totalTime));
 
-  // 1. KICKS: Sub-bass sine body + fast 25ms pitch-click transient + subtle soft-clip warmth
   if (engine === "kick") {
     const bodyOsc = audioCtx.createOscillator();
     bodyOsc.type = s.wave || "sine";
@@ -2365,7 +2338,6 @@ async function playDrumSound(trackId, when = null, ignoreMuteSolo = false, stepV
     bodyOsc.frequency.exponentialRampToValueAtTime(Math.max(24, s.endFreq * 1.15), startTime + 0.045);
     bodyOsc.frequency.exponentialRampToValueAtTime(Math.max(20, s.endFreq), startTime + totalTime);
 
-    // Fast 25ms beater pitch-click transient (160 Hz -> 42 Hz)
     const clickOsc = audioCtx.createOscillator();
     clickOsc.type = "triangle";
     clickOsc.frequency.setValueAtTime(Math.max(160, s.startFreq * 1.15), startTime);
@@ -2415,7 +2387,6 @@ async function playDrumSound(trackId, when = null, ignoreMuteSolo = false, stepV
     return;
   }
 
-  // 2. SNARES: Dual pitched shell oscillators (~185 Hz & ~330 Hz) + bandpass snare-wire noise
   if (engine === "snare") {
     const shellLow = audioCtx.createOscillator();
     shellLow.type = s.wave || "triangle";
@@ -2462,7 +2433,6 @@ async function playDrumSound(trackId, when = null, ignoreMuteSolo = false, stepV
     return;
   }
 
-  // 3. CLAPS: Dual pitched body + 3 rapid 12ms transient bursts before the main tail
   if (engine === "clap") {
     const spread = s.spreadMs || 0.012;
     const clapNoise = createNoiseSourceWithRandomOffset(startTime, totalTime + spread * 3);
@@ -2475,7 +2445,6 @@ async function playDrumSound(trackId, when = null, ignoreMuteSolo = false, stepV
     const clapEnv = audioCtx.createGain();
     clapEnv.gain.setValueAtTime(0.0001, startTime);
 
-    // 3 rapid staggered hand-clap bursts (0ms, 12ms, 24ms)
     for (let b = 0; b < 3; b++) {
       const bStart = startTime + b * spread;
       clapEnv.gain.setValueAtTime(0.0001, bStart);
@@ -2483,12 +2452,10 @@ async function playDrumSound(trackId, when = null, ignoreMuteSolo = false, stepV
       clapEnv.gain.exponentialRampToValueAtTime(0.08 * effectiveVolume, bStart + spread * 0.88);
     }
 
-    // Main reverberant clap tail after the 3rd burst
     const tailStart = startTime + 3 * spread;
     clapEnv.gain.setValueAtTime(effectiveVolume, tailStart);
     clapEnv.gain.exponentialRampToValueAtTime(0.0001, tailStart + s.decay);
 
-    // Subtle dual-body thump underneath the slap
     const bodyOsc1 = audioCtx.createOscillator();
     bodyOsc1.type = "triangle";
     bodyOsc1.frequency.setValueAtTime(s.startFreq, startTime);
@@ -2510,12 +2477,10 @@ async function playDrumSound(trackId, when = null, ignoreMuteSolo = false, stepV
     return;
   }
 
-  // 4. HATS & CYMBALS: 6 detuned square oscillators through resonant bandpass + high-pass filter
   if (engine === "metallic") {
     const metalBus = audioCtx.createGain();
     metalBus.gain.value = 1.0;
 
-    // Classic TR-808 inharmonic 6-oscillator frequency ratios
     const ratios = [1.0, 1.483, 1.932, 2.546, 3.012, 3.847];
     const oscLevel = (s.metallicTone || 0.85) * (0.24 / ratios.length);
 
@@ -2534,14 +2499,12 @@ async function playDrumSound(trackId, when = null, ignoreMuteSolo = false, stepV
       osc.stop(startTime + totalTime + 0.03);
     });
 
-    // Subtle high-frequency air noise blended into the metallic cluster
     const airNoise = createNoiseSourceWithRandomOffset(startTime, totalTime);
     const airGain = audioCtx.createGain();
     airGain.gain.value = s.noiseMix * 0.22;
     airNoise.connect(airGain);
     airGain.connect(metalBus);
 
-    // Resonant Bandpass (7.2 kHz) -> High-Pass (5.8 kHz) for crisp metallic shimmer
     const metalBp = audioCtx.createBiquadFilter();
     metalBp.type = "bandpass";
     metalBp.frequency.setValueAtTime(7200, startTime);
@@ -2570,7 +2533,6 @@ async function playDrumSound(trackId, when = null, ignoreMuteSolo = false, stepV
     return;
   }
 
-  // 5. TOMS: Pitched resonant membrane body + stick transient
   const tomOsc = audioCtx.createOscillator();
   tomOsc.type = s.wave || "sine";
   tomOsc.frequency.setValueAtTime(s.startFreq, startTime);
@@ -2615,7 +2577,6 @@ async function playDrumSound(trackId, when = null, ignoreMuteSolo = false, stepV
 async function startSustainedSynthNote(noteId, baseFreq = 220, velocity = 0.88) {
   initAudio();
 
-  // If this key is already held, release the previous voice cleanly first
   if (activePolyVoices.has(noteId)) {
     releaseSustainedSynthNote(noteId);
   }
@@ -2627,7 +2588,6 @@ async function startSustainedSynthNote(noteId, baseFreq = 220, velocity = 0.88) 
   const detuneCents = rackState.bypass.tuning ? 0 : rackState.params.detune;
   const shiftedFreq = baseFreq * Math.pow(2, pitchSemis / 12);
 
-  // Polyphony headroom scaling so chords sound lush without clipping
   const polyHeadroom = 0.78;
   const vel = Math.max(0.2, Math.min(1.0, velocity));
 
@@ -2648,7 +2608,6 @@ async function startSustainedSynthNote(noteId, baseFreq = 220, velocity = 0.88) 
     const sourceMixer = audioCtx.createGain();
     sourceMixer.gain.value = 1.0;
 
-    // Subtle stereo spread on twin detuned voice
     const panPrimary = audioCtx.createStereoPanner();
     panPrimary.pan.setValueAtTime(Math.abs(detuneCents) > 0.5 ? -0.24 : 0, now);
     srcPrimary.connect(panPrimary);
@@ -2745,6 +2704,7 @@ async function startSustainedSynthNote(noteId, baseFreq = 220, velocity = 0.88) 
     };
 
     activePolyVoices.set(noteId, { stopRelease });
+    updateCalAnimationState();
     return;
   }
 
@@ -2803,7 +2763,6 @@ async function startSustainedSynthNote(noteId, baseFreq = 220, velocity = 0.88) 
     const filter = audioCtx.createBiquadFilter();
     filter.type = rackState.filterType;
     const baseCut = rackState.params.cutoff;
-    // Gentle velocity-sensitive filter envelope sweep for warm analog expressiveness
     const envCutPeak = rackState.filterType === "lowpass"
       ? Math.min(12000, baseCut * (1 + 0.38 * vel))
       : baseCut;
@@ -2855,6 +2814,7 @@ async function startSustainedSynthNote(noteId, baseFreq = 220, velocity = 0.88) 
   };
 
   activePolyVoices.set(noteId, { stopRelease });
+  updateCalAnimationState();
 }
 
 function releaseSustainedSynthNote(noteId) {
@@ -2862,9 +2822,9 @@ function releaseSustainedSynthNote(noteId) {
   if (!voice) return;
   voice.stopRelease();
   activePolyVoices.delete(noteId);
+  updateCalAnimationState();
 }
 
-// One-shot trigger helper for mouse clicks on TRIG SYNTH NOTE or sample previews
 async function triggerOneShotSynthNote(baseFreq = 220, holdMs = 340) {
   const oneShotId = `oneshot_${Date.now()}_${Math.random()}`;
   await startSustainedSynthNote(oneShotId, baseFreq, 0.9);
@@ -3342,7 +3302,6 @@ function createEmptyGridPattern() {
   return empty;
 }
 
-// Normalize preset velocities: factory `1` maps to `0.85` (normal hit) so `1.0` stays reserved for user accents
 function cloneGridPattern(sourceGrid, normalizeBinaryHits = false) {
   const copy = {};
   WAVECRAFT_DATA.tracks.forEach((t) => {
@@ -3374,7 +3333,7 @@ function renderSectionTabs() {
     btn.textContent = sec.name;
     btn.title = `Switch to Section ${sec.name} (${sec.stepCount} steps)`;
     btn.addEventListener("click", () => {
-      switchToSection(idx);
+      switchToSection(idx, true);
     });
     sectionTabsContainer.appendChild(btn);
   });
@@ -3384,7 +3343,7 @@ function renderSectionTabs() {
   }
 }
 
-function switchToSection(targetIdx) {
+function switchToSection(targetIdx, resetAudioScheduler = false) {
   if (targetIdx < 0 || targetIdx >= sections.length) return;
   if (sections[activeSectionIndex]) {
     sections[activeSectionIndex].grid = gridState;
@@ -3396,11 +3355,15 @@ function switchToSection(targetIdx) {
   gridState = nextSec.grid;
   stepCount = nextSec.stepCount || 16;
 
+  if (resetAudioScheduler) {
+    schedulingSectionIndex = targetIdx;
+    if (currentScheduleStep >= stepCount) {
+      currentScheduleStep = 0;
+    }
+  }
+
   if (stepsSelect) {
     stepsSelect.value = String(stepCount);
-  }
-  if (currentScheduleStep >= stepCount) {
-    currentScheduleStep = 0;
   }
   lastDrawnVisualStep = -1;
 
@@ -3423,7 +3386,7 @@ function addNewSection() {
     grid: createEmptyGridPattern()
   });
 
-  switchToSection(sections.length - 1);
+  switchToSection(sections.length - 1, true);
   updateSoundDesignGuide({
     title: `Pattern Arranger • Added Section ${nextLetter}`,
     what: `Created blank Section ${nextLetter} so you can program a fill, breakdown, or chorus variation.`,
@@ -3459,7 +3422,7 @@ function copyCurrentSectionToNext() {
 
   const fromName = sections[activeSectionIndex].name;
   const toName = sections[targetIdx].name;
-  switchToSection(targetIdx);
+  switchToSection(targetIdx, true);
 
   updateSoundDesignGuide({
     title: `Pattern Arranger • Copied ${fromName} → ${toName}`,
@@ -3677,7 +3640,6 @@ function renderGrid() {
 
       stepElementsByStep[step].push(btn);
 
-      // Click toggles step ON (at 85% normal velocity) / OFF; vertical drag or wheel edits velocity (15%–100%)
       let dragStartY = 0;
       let dragStartVel = 0;
       let didDragVelocity = false;
@@ -3758,7 +3720,7 @@ function updatePlayheadColumnHighlight(newStep) {
 }
 
 // ============================================================================
-// 60FPS ANIMATION LOOP & LOOKAHEAD SCHEDULER
+// 60FPS ANIMATION LOOP & LOOKAHEAD SCHEDULER (WITH RELIABLE SECTION CHAINING)
 // ============================================================================
 
 function animationFrameLoop() {
@@ -3777,7 +3739,7 @@ function animationFrameLoop() {
           currentEvent.sectionIndex !== activeSectionIndex &&
           sections[currentEvent.sectionIndex]
         ) {
-          switchToSection(currentEvent.sectionIndex);
+          switchToSection(currentEvent.sectionIndex, false);
         }
         if (currentEvent.step !== lastDrawnVisualStep) {
           updatePlayheadColumnHighlight(currentEvent.step);
@@ -3794,30 +3756,34 @@ function animationFrameLoop() {
   drawEqVisualizer();
 }
 
-function getStepDurationSeconds(stepIndex) {
+function getStepDurationSecondsForSection(stepIndex, targetStepCount) {
   const bpm = Math.max(40, Math.min(240, Number(bpmInput.value) || 120));
   const barSec = (60 / bpm) * 4;
-  const baseStepSec = barSec / stepCount;
+  const baseStepSec = barSec / targetStepCount;
   const swingFactor = (swingPercent / 100) * 0.5;
   const isEvenStep = stepIndex % 2 === 0;
   return isEvenStep ? baseStepSec * (1 + swingFactor) : baseStepSec * (1 - swingFactor);
 }
 
-function scheduleStepEvents(stepIndex, stepTime) {
+function scheduleStepEvents(stepIndex, stepTime, sectionIdx) {
+  const secObj = sections[sectionIdx];
+  const targetGrid = secObj ? secObj.grid : gridState;
+  const targetStepCount = secObj ? (secObj.stepCount || stepCount) : stepCount;
+
   visualStepQueue.push({
     step: stepIndex,
     time: stepTime,
-    sectionIndex: activeSectionIndex
+    sectionIndex: sectionIdx
   });
 
-  const stepsPerQuarter = stepCount / 4;
+  const stepsPerQuarter = targetStepCount / 4;
   if (metronomeEnabled && stepIndex % stepsPerQuarter === 0) {
     const isBeatOne = stepIndex === 0;
     playMetronomeClick(stepTime, isBeatOne);
   }
 
   WAVECRAFT_DATA.tracks.forEach((track) => {
-    const row = gridState[track.id];
+    const row = targetGrid[track.id];
     const stepVel = row ? Number(row[stepIndex]) || 0 : 0;
     if (stepVel > 0) {
       playDrumSound(track.id, stepTime, false, stepVel);
@@ -3829,20 +3795,33 @@ function runLookaheadScheduler() {
   if (!isPlaying || !audioCtx) return;
 
   while (nextNoteTime < audioCtx.currentTime + scheduleAheadTime) {
-    scheduleStepEvents(currentScheduleStep, nextNoteTime);
-    nextNoteTime += getStepDurationSeconds(currentScheduleStep);
+    // Keep live edits to the currently viewed section synced
+    if (sections[activeSectionIndex]) {
+      sections[activeSectionIndex].grid = gridState;
+      sections[activeSectionIndex].stepCount = stepCount;
+    }
+
+    if (!chainSectionsEnabled) {
+      schedulingSectionIndex = activeSectionIndex;
+    } else if (schedulingSectionIndex >= sections.length) {
+      schedulingSectionIndex = 0;
+    }
+
+    const activeSchedSection = sections[schedulingSectionIndex];
+    const schedStepCount = activeSchedSection ? (activeSchedSection.stepCount || stepCount) : stepCount;
+
+    if (currentScheduleStep >= schedStepCount) {
+      currentScheduleStep = 0;
+    }
+
+    scheduleStepEvents(currentScheduleStep, nextNoteTime, schedulingSectionIndex);
+    nextNoteTime += getStepDurationSecondsForSection(currentScheduleStep, schedStepCount);
     currentScheduleStep++;
 
-    if (currentScheduleStep >= stepCount) {
+    if (currentScheduleStep >= schedStepCount) {
       currentScheduleStep = 0;
       if (chainSectionsEnabled && sections.length > 1) {
-        if (sections[activeSectionIndex]) {
-          sections[activeSectionIndex].grid = gridState;
-          sections[activeSectionIndex].stepCount = stepCount;
-        }
-        activeSectionIndex = (activeSectionIndex + 1) % sections.length;
-        gridState = sections[activeSectionIndex].grid;
-        stepCount = sections[activeSectionIndex].stepCount || 16;
+        schedulingSectionIndex = (schedulingSectionIndex + 1) % sections.length;
       }
     }
   }
@@ -3857,6 +3836,7 @@ function togglePlay() {
   if (isPlaying) {
     playBtn.classList.add("is-playing");
     currentScheduleStep = 0;
+    schedulingSectionIndex = activeSectionIndex;
     updatePlayheadColumnHighlight(-1);
     visualStepQueue.length = 0;
     nextNoteTime = audioCtx.currentTime + 0.03;
@@ -3867,6 +3847,9 @@ function togglePlay() {
     visualStepQueue.length = 0;
     updatePlayheadColumnHighlight(-1);
   }
+
+  renderSectionTabs();
+  updateCalAnimationState();
 }
 
 function toggleMetronome() {
@@ -3887,6 +3870,7 @@ function loadDefaultPreset(presetKey = "basicRock") {
 
   bpmInput.value = preset.bpm;
   waveSelect.value = preset.waveform;
+  syncCalBeatTempo();
 
   swingPercent = preset.swing !== undefined ? preset.swing : 0;
   swingSlider.value = swingPercent;
@@ -3910,10 +3894,8 @@ function loadDefaultPreset(presetKey = "basicRock") {
   renderModularRack();
   updateMasterFxParams();
 
-  // Map binary 1s in factory presets to 0.85 normal hit velocity (reserving 1.0 for accents)
   const initialPatternA = cloneGridPattern(preset.pattern, true);
   const initialPatternB = cloneGridPattern(preset.pattern, true);
-  // Seed Section B with a subtle tom/clap fill variation
   if (initialPatternB.clap) initialPatternB.clap[14] = 0.82;
   if (initialPatternB.lowtom) initialPatternB.lowtom[15] = 0.88;
   if (initialPatternB.midtom) initialPatternB.midtom[13] = 0.82;
@@ -3923,6 +3905,7 @@ function loadDefaultPreset(presetKey = "basicRock") {
     { id: "sec_B", name: "B", stepCount: stepCount, grid: initialPatternB }
   ];
   activeSectionIndex = 0;
+  schedulingSectionIndex = 0;
   gridState = sections[0].grid;
 
   renderSectionTabs();
@@ -3936,7 +3919,6 @@ function generateSmartGroove() {
   for (let bar = 0; bar < 2; bar++) {
     const offset = bar * 16;
 
-    // 1. Kick
     newGrid.kick[offset + 0] = 0.96;
     if (grooveStyle === 0) {
       newGrid.kick[offset + 4] = 0.86;
@@ -3954,7 +3936,6 @@ function generateSmartGroove() {
       newGrid.kick[offset + 10] = 0.88;
     }
 
-    // 2. Snare
     if (grooveStyle === 2) {
       newGrid.snare[offset + 8] = 0.95;
       if (Math.random() > 0.5) newGrid.snare[offset + 14] = 0.56;
@@ -3964,7 +3945,6 @@ function generateSmartGroove() {
       if (Math.random() > 0.6) newGrid.snare[offset + 15] = 0.52;
     }
 
-    // 3. Closed Hat & 4. Open Hat (non-overlapping so open hat breathes before next closed hat)
     const hatDensity = Math.random();
     for (let s = 0; s < 16; s++) {
       const isOffbeat = s % 4 === 2;
@@ -3983,11 +3963,9 @@ function generateSmartGroove() {
       newGrid.openhat[offset + 14] = 0.82;
     }
 
-    // 5. Clap
     if (Math.random() > 0.35) newGrid.clap[offset + 12] = 0.88;
     if (Math.random() > 0.55) newGrid.clap[offset + 4] = 0.76;
 
-    // 6. Low Tom & 7. Mid Tom (syncopated percussion & bar-end fills)
     if (Math.random() > 0.4) {
       newGrid.midtom[offset + 11] = 0.74;
       newGrid.lowtom[offset + 15] = 0.82;
@@ -3997,7 +3975,6 @@ function generateSmartGroove() {
       newGrid.lowtom[offset + 14] = 0.85;
     }
 
-    // 8. Crash on Bar 1 downbeat
     if (bar === 0 && Math.random() > 0.35) {
       newGrid.crash[offset + 0] = 0.82;
     }
@@ -4022,22 +3999,26 @@ function setupKeyboardShortcuts() {
     if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
     if (e.repeat) return;
 
-    const key = e.key.toLowerCase();
-
     if (e.code === "Space") {
       e.preventDefault();
       togglePlay();
       return;
     }
 
+    const key = e.key.toLowerCase();
+
     if (DRUM_KEY_MAP[key]) {
-      e.preventDefault();
-      playDrumSound(DRUM_KEY_MAP[key], null, true, 0.88);
+      const trackId = DRUM_KEY_MAP[key];
+      selectedTrackId = trackId;
+      document.querySelectorAll(".track-row").forEach((r) => {
+        r.classList.toggle("selected-track", r.dataset.trackId === selectedTrackId);
+      });
+      renderDrumEditor();
+      playDrumSound(trackId, null, true, 0.92);
       return;
     }
 
     if (SYNTH_KEY_MAP[key]) {
-      e.preventDefault();
       startSustainedSynthNote(`key_${key}`, SYNTH_KEY_MAP[key], 0.88);
     }
   });
@@ -4049,7 +4030,6 @@ function setupKeyboardShortcuts() {
     }
   });
 
-  // Safety cleanup if browser tab loses focus while keys are held down
   window.addEventListener("blur", () => {
     Array.from(activePolyVoices.keys()).forEach((noteId) => {
       releaseSustainedSynthNote(noteId);
@@ -4057,96 +4037,15 @@ function setupKeyboardShortcuts() {
   });
 }
 
-function setupTooltips() {
-  window.addEventListener("mousemove", (e) => {
-    if (learnModeEnabled && isHoveringLearnTarget) {
-      positionLearnTooltipNearCursor(e.clientX, e.clientY);
-    }
-  });
-
-  document.addEventListener("mouseleave", () => {
-    isHoveringLearnTarget = false;
-    refreshLearnTooltipVisibility();
-  });
-
-  document.querySelectorAll("[data-tip]").forEach((el) => {
-    attachLearnHoverHandlers(el, () => ({
-      title: "Hardware Control Overview",
-      what: el.dataset.tip,
-      listen: "Press START / STOP or hold keys A–K to hear how this control shapes the audio.",
-      watch: "Watch the dual phosphor screens respond immediately."
-    }));
-  });
-}
-
-function setupSamplerAndChopperControls() {
-  if (recMicBtn) {
-    recMicBtn.addEventListener("click", startMicRecording);
-  }
-
-  if (previewRecBtn) {
-    previewRecBtn.addEventListener("click", () => {
-      if (waveSelect && !waveSelect.value.startsWith("sample:")) {
-        if (pendingRecording) {
-          waveSelect.value = "sample:unsaved";
-          resetSampleSoundDesignToDefaults(true);
-        } else if (sampleLibrarySelect && sampleLibrarySelect.value) {
-          waveSelect.value = `sample:${sampleLibrarySelect.value}`;
-          const sampleObj = getSampleById(sampleLibrarySelect.value);
-          applySavedSampleSoundDesign(sampleObj, true);
-        }
-        updateSampleChopperUI();
-        recalculateStaticWaveform("synth");
-      }
-      triggerOneShotSynthNote(parseFloat(noteSelect.value) || 220);
-    });
-  }
-
-  if (saveSampleBtn) {
-    saveSampleBtn.addEventListener("click", () => saveActiveSampleToLibrary(false));
-  }
-
-  if (saveSampleFxBtn) {
-    saveSampleFxBtn.addEventListener("click", () => saveActiveSampleToLibrary(true));
-  }
-
-  if (sampleLibrarySelect) {
-    sampleLibrarySelect.addEventListener("change", () => {
-      const chosenId = sampleLibrarySelect.value;
-      if (deleteSampleBtn) deleteSampleBtn.disabled = !chosenId;
-
-      if (chosenId) {
-        if (waveSelect) waveSelect.value = `sample:${chosenId}`;
-        if (previewRecBtn) previewRecBtn.disabled = false;
-        const sampleObj = getSampleById(chosenId);
-
-        applySavedSampleSoundDesign(sampleObj, true);
-
-        resetChopMarkers(false);
-        updateSampleChopperUI();
-        recalculateStaticWaveform("synth");
-
-        if (sampleObj && recStatusText) {
-          recStatusText.textContent = sampleObj.soundDesign
-            ? `Loaded "${sampleObj.name}" + saved sound design!`
-            : `Loaded "${sampleObj.name}" (default settings).`;
-        }
-        triggerOneShotSynthNote(parseFloat(noteSelect.value) || 220);
-      } else {
-        updateSaveButtonsEnabledState();
-      }
-    });
-  }
-
-  if (deleteSampleBtn) {
-    deleteSampleBtn.addEventListener("click", deleteSelectedLibrarySample);
-  }
-
+function setupSampleChopperEvents() {
   if (chopStartSlider) {
     chopStartSlider.addEventListener("input", () => {
-      const rawStart = Number(chopStartSlider.value) / 100;
-      chopStartRatio = Math.min(chopEndRatio - 0.03, Math.max(0, rawStart));
-      chopStartSlider.value = String(Math.round(chopStartRatio * 100));
+      const startPct = Number(chopStartSlider.value);
+      const endPct = Number(chopEndSlider ? chopEndSlider.value : 100);
+      if (startPct >= endPct - 2) {
+        chopStartSlider.value = String(Math.max(0, endPct - 2));
+      }
+      chopStartRatio = Number(chopStartSlider.value) / 100;
       updateSampleChopperUI();
       recalculateStaticWaveform("synth");
     });
@@ -4154,9 +4053,12 @@ function setupSamplerAndChopperControls() {
 
   if (chopEndSlider) {
     chopEndSlider.addEventListener("input", () => {
-      const rawEnd = Number(chopEndSlider.value) / 100;
-      chopEndRatio = Math.max(chopStartRatio + 0.03, Math.min(1, rawEnd));
-      chopEndSlider.value = String(Math.round(chopEndRatio * 100));
+      const endPct = Number(chopEndSlider.value);
+      const startPct = Number(chopStartSlider ? chopStartSlider.value : 0);
+      if (endPct <= startPct + 2) {
+        chopEndSlider.value = String(Math.min(100, startPct + 2));
+      }
+      chopEndRatio = Number(chopEndSlider.value) / 100;
       updateSampleChopperUI();
       recalculateStaticWaveform("synth");
     });
@@ -4169,72 +4071,123 @@ function setupSamplerAndChopperControls() {
   }
 
   if (applyChopBtn) {
-    applyChopBtn.addEventListener("click", applyPermanentChopToActiveSample);
+    applyChopBtn.addEventListener("click", () => {
+      applyPermanentChopToActiveSample();
+    });
   }
 
   if (sampleChopCanvas) {
-    function pointerRatioFromEvent(e) {
+    function clientXToRatio(clientX) {
       const rect = sampleChopCanvas.getBoundingClientRect();
-      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-      return Math.max(0, Math.min(1, (clientX - rect.left) / Math.max(1, rect.width)));
+      if (rect.width <= 0) return 0;
+      return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
     }
 
-    function onChopPointerMove(e) {
-      if (!isDraggingChopCanvas) return;
-      const curRatio = pointerRatioFromEvent(e);
-      const minR = Math.min(chopDragAnchorRatio, curRatio);
-      const maxR = Math.max(chopDragAnchorRatio, curRatio);
+    sampleChopCanvas.addEventListener("mousedown", (e) => {
+      if (!getActiveChopperSample()) return;
+      isDraggingChopCanvas = true;
+      chopDragAnchorRatio = clientXToRatio(e.clientX);
+    });
 
-      if (maxR - minR >= 0.03) {
-        chopStartRatio = minR;
-        chopEndRatio = maxR;
+    window.addEventListener("mousemove", (e) => {
+      if (!isDraggingChopCanvas) return;
+      const curRatio = clientXToRatio(e.clientX);
+      const low = Math.min(chopDragAnchorRatio, curRatio);
+      const high = Math.max(chopDragAnchorRatio, curRatio);
+
+      if (high - low >= 0.02) {
+        chopStartRatio = Number(low.toFixed(2));
+        chopEndRatio = Number(high.toFixed(2));
         if (chopStartSlider) chopStartSlider.value = String(Math.round(chopStartRatio * 100));
         if (chopEndSlider) chopEndSlider.value = String(Math.round(chopEndRatio * 100));
         updateSampleChopperUI();
         recalculateStaticWaveform("synth");
       }
-    }
-
-    function onChopPointerUp() {
-      if (!isDraggingChopCanvas) return;
-      isDraggingChopCanvas = false;
-      window.removeEventListener("mousemove", onChopPointerMove);
-      window.removeEventListener("mouseup", onChopPointerUp);
-      window.removeEventListener("touchmove", onChopPointerMove);
-      window.removeEventListener("touchend", onChopPointerUp);
-      if (getActiveChopperSample()) {
-        triggerOneShotSynthNote(parseFloat(noteSelect.value) || 220);
-      }
-    }
-
-    sampleChopCanvas.addEventListener("mousedown", (e) => {
-      if (!getActiveChopperSample()) return;
-      e.preventDefault();
-      isDraggingChopCanvas = true;
-      chopDragAnchorRatio = pointerRatioFromEvent(e);
-      window.addEventListener("mousemove", onChopPointerMove);
-      window.addEventListener("mouseup", onChopPointerUp);
     });
 
-    sampleChopCanvas.addEventListener("touchstart", (e) => {
-      if (!getActiveChopperSample()) return;
-      isDraggingChopCanvas = true;
-      chopDragAnchorRatio = pointerRatioFromEvent(e);
-      window.addEventListener("touchmove", onChopPointerMove);
-      window.addEventListener("touchend", onChopPointerUp);
-    }, { passive: true });
+    window.addEventListener("mouseup", () => {
+      isDraggingChopCanvas = false;
+    });
   }
 }
 
-function startApp() {
-  loadSavedSamplesFromStorage();
-  initRackDefaults();
-  initDrumSettings();
-  syncSampleDropdowns();
-
-  if (savedSamples.length > 0 && recStatusText) {
-    recStatusText.textContent = `${savedSamples.length} saved sample${savedSamples.length === 1 ? "" : "s"} ready in library.`;
+function setupMicSamplerEvents() {
+  if (recMicBtn) {
+    recMicBtn.addEventListener("click", () => {
+      startMicRecording();
+    });
   }
+
+  if (previewRecBtn) {
+    previewRecBtn.addEventListener("click", () => {
+      const freq = parseFloat(noteSelect.value) || 220;
+      if (pendingRecording && waveSelect) {
+        waveSelect.value = "sample:unsaved";
+        updateSampleChopperUI();
+        recalculateStaticWaveform("synth");
+      }
+      triggerOneShotSynthNote(freq, 420);
+    });
+  }
+
+  if (saveSampleBtn) {
+    saveSampleBtn.addEventListener("click", () => {
+      saveActiveSampleToLibrary(false);
+    });
+  }
+
+  if (saveSampleFxBtn) {
+    saveSampleFxBtn.addEventListener("click", () => {
+      saveActiveSampleToLibrary(true);
+    });
+  }
+
+  if (sampleLibrarySelect) {
+    sampleLibrarySelect.addEventListener("change", async () => {
+      const selectedId = sampleLibrarySelect.value;
+      if (deleteSampleBtn) {
+        deleteSampleBtn.disabled = !selectedId;
+      }
+      if (!selectedId) {
+        updateSampleChopperUI();
+        return;
+      }
+      const sampleObj = getSampleById(selectedId);
+      if (sampleObj) {
+        await decodeSampleToAudioBuffer(sampleObj);
+        applySavedSampleSoundDesign(sampleObj, true);
+
+        resetChopMarkers(false);
+        if (waveSelect) {
+          waveSelect.value = `sample:${sampleObj.id}`;
+        }
+        if (previewRecBtn) {
+          previewRecBtn.disabled = false;
+        }
+        updateSampleChopperUI();
+        recalculateStaticWaveform("synth");
+
+        if (recStatusText) {
+          recStatusText.textContent = sampleObj.soundDesign
+            ? `Loaded "${sampleObj.name}" + saved sound design.`
+            : `Loaded clean sample "${sampleObj.name}" (default settings).`;
+        }
+
+        triggerOneShotSynthNote(parseFloat(noteSelect.value) || 220, 400);
+      }
+    });
+  }
+
+  if (deleteSampleBtn) {
+    deleteSampleBtn.addEventListener("click", () => {
+      deleteSelectedLibrarySample();
+    });
+  }
+}
+
+function setupEvents() {
+  playBtn.addEventListener("click", togglePlay);
+  metroBtn.addEventListener("click", toggleMetronome);
 
   if (learnToggleBtn) {
     learnToggleBtn.addEventListener("click", () => {
@@ -4242,92 +4195,35 @@ function startApp() {
     });
   }
 
-  const synthCanvas = document.getElementById("scope-synth");
-  if (synthCanvas) registerChannelCanvas("synth", synthCanvas, "#2dd4bf");
-
-  eqCanvas = document.getElementById("eq-visualizer");
-  if (eqCanvas) eqCtx = eqCanvas.getContext("2d");
-
-  playBtn.addEventListener("click", togglePlay);
-  metroBtn.addEventListener("click", toggleMetronome);
-
-  bpmInput.addEventListener("input", () => {
-    updateMasterFxParams();
-    recalculateStaticWaveform("synth");
+  document.querySelectorAll("[data-tip]").forEach((el) => {
+    if (el.classList.contains("knob-unit")) return;
+    attachLearnHoverHandlers(el, () => {
+      const labelEl = el.querySelector("span") || el.querySelector(".scope-label");
+      const titleText = labelEl ? labelEl.textContent.trim() : (el.textContent.trim().slice(0, 28) || "Hardware Control");
+      return {
+        title: titleText,
+        what: el.dataset.tip,
+        listen: "Trigger a synth note or play the drum groove to hear how this control shapes the sound.",
+        watch: "Watch the phosphor waveform and frequency analyzer respond in real time."
+      };
+    });
   });
 
   if (factoryPresetSelect) {
-    factoryPresetSelect.addEventListener("change", (e) => {
-      const chosenPreset = e.target.value;
-      loadDefaultPreset(chosenPreset);
+    factoryPresetSelect.addEventListener("change", () => {
+      const chosenPreset = factoryPresetSelect.value;
       const presetObj = WAVECRAFT_DATA.presets[chosenPreset];
+      loadDefaultPreset(chosenPreset);
       if (presetObj) {
         updateSoundDesignGuide({
           title: `Factory Preset • ${presetObj.name}`,
-          what: `Loaded the ${presetObj.name} 8-track drum groove (${presetObj.bpm} BPM, ${presetObj.swing}% swing) and its matched synth patch.`,
-          listen: "Press START / STOP (Spacebar) and play polyphonic chords with keys A–K!",
-          watch: "Watch the 8-track step grid, OSC Waveform, and Master EQ curve update to the new preset."
+          what: presetObj.description || `Loaded ${presetObj.name} at ${presetObj.bpm} BPM.`,
+          listen: "Press START / STOP (or Spacebar) for the 8-track groove, and hold keys A–K to play the matching synth patch.",
+          watch: "Watch the 6 synth rack modules, tempo-synced echo, and 8 drum lanes update to match the preset."
         });
       }
     });
   }
-
-  waveSelect.addEventListener("change", () => {
-    const val = waveSelect.value;
-    const isSample = val.startsWith("sample:");
-
-    if (isSample) {
-      const sampleObj = getSampleById(val);
-      if (sampleLibrarySelect && val !== "sample:unsaved" && sampleObj) {
-        sampleLibrarySelect.value = sampleObj.id;
-        if (deleteSampleBtn) deleteSampleBtn.disabled = false;
-      }
-      applySavedSampleSoundDesign(sampleObj, true);
-    } else {
-      resetSampleSoundDesignToDefaults(true);
-    }
-
-    resetChopMarkers(false);
-    updateSampleChopperUI();
-    recalculateStaticWaveform("synth");
-
-    const waveName = waveSelect.options[waveSelect.selectedIndex].text;
-    updateSoundDesignGuide({
-      title: isSample ? `Mic Sample • ${waveName}` : `Oscillator Waveform • ${waveName}`,
-      what: isSample
-        ? "Uses your chopped microphone sample as the sound source and loads any saved sound design settings."
-        : "Chooses the foundational geometric shape of the vibrating sound wave before filtering or effects.",
-      listen: isSample
-        ? "Tweak any knobs and click SAVE CHOP + SOUND to store your changes for both Synth and Drum Sequencer."
-        : "Sine is pure and subby; Triangle is warm; Sawtooth is rich and buzzy; Square is hollow and retro.",
-      watch: "Watch the waveform on the OSC Waveform screen reshape immediately as you turn any rack knob."
-    });
-  });
-
-  // Mouse press & hold on TRIG SYNTH NOTE also respects sustain until mouse release
-  testSynthBtn.addEventListener("mousedown", (e) => {
-    if (e.button !== 0) return;
-    const noteFreq = parseFloat(noteSelect.value) || 220;
-    startSustainedSynthNote("btn_trig", noteFreq, 0.9);
-  });
-  window.addEventListener("mouseup", () => {
-    if (activePolyVoices.has("btn_trig")) {
-      releaseSustainedSynthNote("btn_trig");
-    }
-  });
-
-  previewDrumBtn.addEventListener("click", () => playDrumSound(selectedTrackId, null, true, 0.9));
-  inspireBtn.addEventListener("click", generateSmartGroove);
-
-  stepsSelect.addEventListener("change", (e) => {
-    stepCount = Number(e.target.value);
-    if (sections[activeSectionIndex]) {
-      sections[activeSectionIndex].stepCount = stepCount;
-    }
-    if (currentScheduleStep >= stepCount) currentScheduleStep = 0;
-    lastDrawnVisualStep = -1;
-    renderGrid();
-  });
 
   if (addSectionBtn) {
     addSectionBtn.addEventListener("click", addNewSection);
@@ -4341,14 +4237,94 @@ function startApp() {
       chainSectionsBtn.classList.toggle("active", chainSectionsEnabled);
       chainSectionsBtn.setAttribute("aria-pressed", String(chainSectionsEnabled));
       chainSectionsBtn.textContent = chainSectionsEnabled ? "CHAIN: ON" : "CHAIN: OFF";
+
+      if (chainSectionsEnabled) {
+        schedulingSectionIndex = activeSectionIndex;
+      }
+
       renderSectionTabs();
+      updateSoundDesignGuide({
+        title: chainSectionsEnabled ? "Song Chain • Enabled (A → B → C...)" : "Song Chain • Loop Single Section",
+        what: chainSectionsEnabled
+          ? "Sequencer will automatically play through all sections in order (A → B → C...) like a full song arrangement."
+          : "Sequencer will continuously loop only the currently selected section tab.",
+        listen: "Press START / STOP to hear your pattern transitions play back-to-back.",
+        watch: "Watch the active section tab glow amber as the playhead advances from section to section."
+      });
     });
   }
+
+  bpmInput.addEventListener("change", () => {
+    updateMasterFxParams();
+    recalculateStaticWaveform("synth");
+    syncCalBeatTempo();
+  });
+
+  stepsSelect.addEventListener("change", () => {
+    stepCount = Number(stepsSelect.value);
+    if (sections[activeSectionIndex]) {
+      sections[activeSectionIndex].stepCount = stepCount;
+    }
+    if (currentScheduleStep >= stepCount) {
+      currentScheduleStep = 0;
+    }
+    lastDrawnVisualStep = -1;
+    renderSectionTabs();
+    renderGrid();
+  });
 
   swingSlider.addEventListener("input", () => {
     swingPercent = Number(swingSlider.value);
     swingVal.textContent = swingPercent;
   });
+
+  waveSelect.addEventListener("change", () => {
+    const val = waveSelect.value;
+    if (val.startsWith("sample:")) {
+      const sampleObj = getSampleById(val);
+      if (sampleObj) {
+        if (sampleObj.id !== "unsaved") {
+          if (sampleLibrarySelect) sampleLibrarySelect.value = sampleObj.id;
+          if (deleteSampleBtn) deleteSampleBtn.disabled = false;
+          applySavedSampleSoundDesign(sampleObj, true);
+          if (recStatusText) {
+            recStatusText.textContent = sampleObj.soundDesign
+              ? `Loaded "${sampleObj.name}" + saved sound design.`
+              : `Loaded clean sample "${sampleObj.name}" (default settings).`;
+          }
+        } else {
+          resetSampleSoundDesignToDefaults(true);
+        }
+        resetChopMarkers(false);
+        updateSampleChopperUI();
+      }
+    } else {
+      updateSaveButtonsEnabledState();
+    }
+    recalculateStaticWaveform("synth");
+  });
+
+  if (testSynthBtn) {
+    const triggerBtnMouseDown = (e) => {
+      e.preventDefault();
+      const freq = parseFloat(noteSelect.value) || 220;
+      startSustainedSynthNote("ui_test_btn", freq, 0.92);
+    };
+    const releaseBtnMouseUp = () => {
+      releaseSustainedSynthNote("ui_test_btn");
+    };
+
+    testSynthBtn.addEventListener("mousedown", triggerBtnMouseDown);
+    window.addEventListener("mouseup", releaseBtnMouseUp);
+    testSynthBtn.addEventListener("touchstart", triggerBtnMouseDown, { passive: false });
+    testSynthBtn.addEventListener("touchend", releaseBtnMouseUp);
+  }
+
+  previewDrumBtn.addEventListener("click", () => {
+    playDrumSound(selectedTrackId, null, true, 0.95);
+  });
+
+  inspireBtn.addEventListener("click", generateSmartGroove);
 
   clearBtn.addEventListener("click", () => {
     WAVECRAFT_DATA.tracks.forEach((t) => {
@@ -4359,21 +4335,37 @@ function startApp() {
     }
     renderGrid();
   });
-
-  setupSamplerAndChopperControls();
-  setupTooltips();
-  setupModularRackControls();
-  setupKeyboardShortcuts();
-  renderModularRack();
-  renderGlobalDrumSpaceKnobs();
-  renderDrumEditor();
-  loadDefaultPreset("basicRock");
-  updateSampleChopperUI();
-
-  if (!animLoopStarted) {
-    animLoopStarted = true;
-    animationFrameLoop();
-  }
 }
 
-startApp();
+// ============================================================================
+// INITIALIZE APPLICATION ON LOAD
+// ============================================================================
+
+loadSavedSamplesFromStorage();
+initRackDefaults();
+initDrumSettings();
+
+const synthCanvasEl = document.getElementById("scope-synth");
+registerChannelCanvas("synth", synthCanvasEl, "#2dd4bf");
+
+eqCanvas = document.getElementById("eq-visualizer");
+if (eqCanvas) {
+  eqCtx = eqCanvas.getContext("2d");
+}
+
+setupModularRackControls();
+renderGlobalDrumSpaceKnobs();
+loadDefaultPreset("basicRock");
+syncSampleDropdowns();
+updateSampleChopperUI();
+renderDrumEditor();
+setupSampleChopperEvents();
+setupMicSamplerEvents();
+setupEvents();
+setupKeyboardShortcuts();
+setLearnModeEnabled(true);
+syncCalBeatTempo();
+updateCalAnimationState();
+
+drawChannelCanvas(channelVisuals.synth, null);
+drawEqVisualizer();
