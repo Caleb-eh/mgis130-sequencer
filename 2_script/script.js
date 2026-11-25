@@ -1,8 +1,8 @@
 // 2_script/script.js
-// PROCESSING & PRESENTATION: Lookahead scheduler, dry metronome, Pitch/Detune twin oscillator,
-// Mic Sampler, Interactive Sample Chopper, Constant-Length Granular Pitch-Shifter,
-// Saved Sound Design Presets on Samples (excluding Space), Global + Per-Track Drum Space,
-// 3-Band EQ BiquadFilterNode chain, floating cursor Learn Mode, and static wave previews.
+// PROCESSING & PRESENTATION: Studio-grade gain-staged Web Audio engine (isolated Drum Bus Limiter
+// vs. Synth Dynamics/Gate), multi-stage analog drum synthesis (6-oscillator metallic hats/cymbals,
+// multi-burst claps, Open Hat choke), stereo-widened 4x-oversampled polyphonic synthesizer,
+// Mic Sampler & Chopper, Multi-Section Arranger, and Floating Cursor Learn Mode.
 
 let audioCtx = null;
 let noiseBuffer = null;
@@ -24,7 +24,7 @@ let lastDrawnVisualStep = -1;
 // Cached Sequencer Step Button DOM Elements (avoids 60fps querySelectorAll)
 let stepElementsByStep = [];
 
-// Master, 3-Band EQ & FX Audio Nodes
+// Master, 3-Band EQ & Bus Routing Nodes
 let masterBusGain = null;
 let eqBassFilter = null;
 let eqMidFilter = null;
@@ -33,14 +33,7 @@ let previewFilterNode = null; // Reusable filter node for 60fps EQ curve calcula
 let eqSpectrumAnalyser = null;
 let eqSpectrumData = null;
 
-let sharedFxInputBus = null; // 3-Band EQ -> Drive -> Compressor -> Noise Gate -> Master
-let driveNode = null;
-let compressorNode = null;
-let gateAnalyserNode = null;
-let gateTimeData = null;
-let gateGainNode = null;
-
-// Synth-Isolated Space & Time Nodes (Echo & Reverb affect ONLY the Wave Synthesizer)
+// Synth-Isolated Dynamics & Space Bus (Drive, Compression, Noise Gate, Echo & Reverb affect Synth only)
 let synthSpaceInputBus = null;
 let synthDryGain = null;
 let delayNode = null;
@@ -49,7 +42,17 @@ let delayWetGain = null;
 let reverbConvolver = null;
 let reverbWetGain = null;
 
-// Dedicated Drum Sequencer Space & Time Bus (Global + Per-Track Echo & Reverb)
+let synthDynamicsInputBus = null;
+let driveNode = null;
+let driveSmoothingFilter = null; // Gentle 9 kHz LPF to remove distortion fizz
+let compressorNode = null;
+let gateAnalyserNode = null;
+let gateTimeData = null;
+let gateGainNode = null;
+
+// Dedicated Drum Bus with Transparent Peak Limiter (prevents Kicks from ducking Hats/Snares)
+let drumBusInput = null;
+let drumBusLimiter = null;
 let drumDelayInputBus = null;
 let drumDelayNode = null;
 let drumDelayFeedbackGain = null;
@@ -58,6 +61,12 @@ let drumGlobalDelayWetGain = null;
 let drumReverbInputBus = null;
 let drumReverbConvolver = null;
 let drumGlobalReverbWetGain = null;
+
+// Track active Open Hat voice so Closed Hat chokes it naturally
+let activeOpenHatVoice = null;
+
+// Active Polyphonic Synth Voices Map: { [noteKey]: { stopRelease: Function } }
+const activePolyVoices = new Map();
 
 // Static Waveform Canvas & Scrubbing Playhead Registry
 const channelVisuals = {}; // { synth: { canvas, ctx, color, wavePoints, playhead }, kick: {...}, ... }
@@ -132,12 +141,16 @@ const rackState = {
   params: {}
 };
 
-// QWERTY Keyboard Mappings
+// QWERTY Keyboard Mappings for all 8 Drum Voices (Keys 1–8)
 const DRUM_KEY_MAP = {
   "1": "kick",
   "2": "snare",
   "3": "hihat",
-  "4": "clap"
+  "4": "openhat",
+  "5": "clap",
+  "6": "lowtom",
+  "7": "midtom",
+  "8": "crash"
 };
 
 const SYNTH_KEY_MAP = {
@@ -166,6 +179,7 @@ const inspireBtn = document.getElementById("inspire-btn");
 const clearBtn = document.getElementById("clear-btn");
 const filterModeBtn = document.getElementById("filter-mode-btn");
 const delaySyncSelect = document.getElementById("delay-sync-select");
+const factoryPresetSelect = document.getElementById("factory-preset-select");
 const sequencerGrid = document.getElementById("sequencer-grid");
 const drumKnobsContainer = document.getElementById("drum-knobs-container");
 const drumGlobalSpaceKnobs = document.getElementById("drum-global-space-knobs");
@@ -225,11 +239,9 @@ function positionLearnTooltipNearCursor(clientX, clientY) {
   let left = clientX + offset;
   let top = clientY + offset;
 
-  // Flip left if too close to right edge of viewport
   if (left + tipWidth > window.innerWidth - 12) {
     left = Math.max(12, clientX - tipWidth - offset);
   }
-  // Flip upward if too close to bottom edge of viewport
   if (top + tipHeight > window.innerHeight - 12) {
     top = Math.max(12, clientY - tipHeight - offset);
   }
@@ -786,7 +798,7 @@ async function applyPermanentChopToActiveSample() {
     if (recStatusText) {
       recStatusText.textContent = `Chopped take to ${pendingRecording.duration.toFixed(2)}s! Save or play now.`;
     }
-    playSynthNote(parseFloat(noteSelect.value) || 220);
+    triggerOneShotSynthNote(parseFloat(noteSelect.value) || 220);
     return;
   }
 
@@ -826,7 +838,7 @@ async function applyPermanentChopToActiveSample() {
   if (recStatusText) {
     recStatusText.textContent = `Applied chop to "${savedItem.name}" (${savedItem.duration.toFixed(2)}s).`;
   }
-  playSynthNote(parseFloat(noteSelect.value) || 220);
+  triggerOneShotSynthNote(parseFloat(noteSelect.value) || 220);
 }
 
 // ============================================================================
@@ -1021,7 +1033,6 @@ async function startMicRecording() {
       tempBuffer: tempBuffer
     };
 
-    // Reset all sound design settings to default whenever a brand-new sample is recorded
     resetSampleSoundDesignToDefaults(true);
 
     clearPitchCacheForSample("unsaved");
@@ -1049,7 +1060,7 @@ async function startMicRecording() {
       watch: "Watch the highlighted region on the Sample Chopper screen and the reshaped wave on OSC Waveform."
     });
 
-    playSynthNote(parseFloat(noteSelect.value) || 220);
+    triggerOneShotSynthNote(parseFloat(noteSelect.value) || 220);
   }
 
   activeMicProcessor.onaudioprocess = (e) => {
@@ -1083,7 +1094,6 @@ async function startMicRecording() {
 async function saveActiveSampleToLibrary(includeSoundDesign = true) {
   const soundDesignPayload = includeSoundDesign ? captureCurrentSampleSoundDesign() : null;
 
-  // Case 1: Saving an unsaved mic recording
   if (pendingRecording) {
     const rawName = sampleNameInput ? sampleNameInput.value.trim() : "";
     const cleanName = (rawName || `Sample ${savedSamples.length + 1}`).slice(0, 24);
@@ -1139,7 +1149,6 @@ async function saveActiveSampleToLibrary(includeSoundDesign = true) {
     return;
   }
 
-  // Case 2: Updating an existing saved library sample with new chop and/or sound design settings
   const activeSample = getActiveChopperSample();
   if (!activeSample || activeSample.id === "unsaved") return;
 
@@ -1230,7 +1239,7 @@ function deleteSelectedLibrarySample() {
 }
 
 // ============================================================================
-// RACK DEFAULTS, TEMPO SYNC & WEB AUDIO BUS INITIALIZATION
+// RACK DEFAULTS, TEMPO SYNC & GAIN-STAGED WEB AUDIO BUS INITIALIZATION
 // ============================================================================
 
 function initRackDefaults() {
@@ -1263,22 +1272,51 @@ function makeDistortionCurve(amount) {
     }
     return curve;
   }
-  const driveGain = 1 + (amount / 100) * 18;
+  const driveGain = 1 + (amount / 100) * 16;
+  const norm = Math.tanh(driveGain * 0.85);
   for (let i = 0; i < samples; i++) {
     const x = (i * 2) / samples - 1;
-    curve[i] = Math.tanh(x * driveGain) / Math.tanh(driveGain * 0.85);
-    curve[i] = Math.max(-1, Math.min(1, curve[i]));
+    curve[i] = Math.max(-1, Math.min(1, Math.tanh(x * driveGain) / norm));
   }
   return curve;
 }
 
-function createReverbImpulse(ctx, duration = 2.1, decay = 2.0) {
-  const length = ctx.sampleRate * duration;
-  const impulse = ctx.createBuffer(2, length, ctx.sampleRate);
+// Stereo-decorrelated Hall Reverb Impulse with early reflections and progressive HF damping
+function createReverbImpulse(ctx, duration = 2.2, decay = 2.2) {
+  const sampleRate = ctx.sampleRate;
+  const length = Math.floor(sampleRate * duration);
+  const impulse = ctx.createBuffer(2, length, sampleRate);
+
+  // Early reflection tap times (in seconds) with distinct L/R offsets for wide stereo space
+  const earlyTapsL = [0.011, 0.023, 0.037, 0.053, 0.071];
+  const earlyTapsR = [0.014, 0.027, 0.041, 0.059, 0.079];
+
   for (let ch = 0; ch < 2; ch++) {
     const channelData = impulse.getChannelData(ch);
+    const taps = ch === 0 ? earlyTapsL : earlyTapsR;
+
+    // Seed discrete stereo early reflections
+    taps.forEach((tapSec, idx) => {
+      const tapSample = Math.floor(tapSec * sampleRate);
+      if (tapSample < length) {
+        const polarity = idx % 2 === 0 ? 1 : -1;
+        channelData[tapSample] += polarity * (0.55 / (idx + 1));
+      }
+    });
+
+    // Progressive one-pole low-pass damping state so high frequencies absorb naturally over time
+    let lpState = 0;
     for (let i = 0; i < length; i++) {
-      channelData[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, decay);
+      const progress = i / length;
+      const env = Math.pow(1 - progress, decay);
+      const white = (Math.random() * 2 - 1) * env;
+
+      // Damping coefficient tightens smoothly as the reverb tail decays
+      const dampAlpha = Math.max(0.08, 0.68 * (1 - progress * 0.85));
+      lpState += dampAlpha * (white - lpState);
+
+      // Blend crisp early reflections with warm damped diffuse tail
+      channelData[i] = channelData[i] * 0.65 + lpState * 0.72;
     }
   }
   return impulse;
@@ -1289,7 +1327,8 @@ function initAudio() {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     audioCtx = new AudioContextClass();
 
-    const bufferSize = audioCtx.sampleRate;
+    // 4-second white noise buffer so randomized start offsets prevent phase cancellation
+    const bufferSize = audioCtx.sampleRate * 4;
     noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
     const data = noiseBuffer.getChannelData(0);
     for (let i = 0; i < bufferSize; i++) {
@@ -1298,39 +1337,10 @@ function initAudio() {
 
     reverbImpulseBuffer = createReverbImpulse(audioCtx);
 
+    // Master Output & 3-Band EQ Bus
     masterBusGain = audioCtx.createGain();
-    masterBusGain.gain.value = 0.9;
+    masterBusGain.gain.value = 0.88;
     masterBusGain.connect(audioCtx.destination);
-
-    // 1. SYNTH-ONLY SPACE & TIME BUS (Echo + Reverb affect ONLY the synthesizer)
-    synthSpaceInputBus = audioCtx.createGain();
-    synthDryGain = audioCtx.createGain();
-    synthDryGain.gain.value = 1.0;
-
-    delayNode = audioCtx.createDelay(1.0);
-    delayNode.delayTime.value = getSyncedDelayTimeSeconds();
-    delayFeedbackGain = audioCtx.createGain();
-    delayWetGain = audioCtx.createGain();
-
-    reverbConvolver = audioCtx.createConvolver();
-    reverbConvolver.buffer = reverbImpulseBuffer;
-    reverbWetGain = audioCtx.createGain();
-
-    // 2. DEDICATED DRUM SEQUENCER SPACE & TIME BUS (Global + Per-Track Echo & Reverb)
-    drumDelayInputBus = audioCtx.createGain();
-    drumDelayNode = audioCtx.createDelay(1.0);
-    drumDelayNode.delayTime.value = getSyncedDelayTimeSeconds();
-    drumDelayFeedbackGain = audioCtx.createGain();
-    drumDelayFeedbackGain.gain.value = 0.42;
-    drumGlobalDelayWetGain = audioCtx.createGain();
-
-    drumReverbInputBus = audioCtx.createGain();
-    drumReverbConvolver = audioCtx.createConvolver();
-    drumReverbConvolver.buffer = reverbImpulseBuffer;
-    drumGlobalReverbWetGain = audioCtx.createGain();
-
-    // 3. SHARED 3-BAND EQUALIZER + DYNAMICS & GRIT BUS
-    sharedFxInputBus = audioCtx.createGain();
 
     eqBassFilter = audioCtx.createBiquadFilter();
     eqBassFilter.type = "lowshelf";
@@ -1347,8 +1357,35 @@ function initAudio() {
 
     previewFilterNode = audioCtx.createBiquadFilter();
 
+    eqSpectrumAnalyser = audioCtx.createAnalyser();
+    eqSpectrumAnalyser.fftSize = 512;
+    eqSpectrumAnalyser.smoothingTimeConstant = 0.82;
+    eqSpectrumData = new Uint8Array(eqSpectrumAnalyser.frequencyBinCount);
+
+    // 1. SYNTH-ISOLATED SPACE & DYNAMICS BUS
+    // (Drive, Compression, Noise Gate, Echo & Reverb shape ONLY the Synthesizer so drums stay punchy)
+    synthSpaceInputBus = audioCtx.createGain();
+    synthDryGain = audioCtx.createGain();
+    synthDryGain.gain.value = 1.0;
+
+    delayNode = audioCtx.createDelay(1.0);
+    delayNode.delayTime.value = getSyncedDelayTimeSeconds();
+    delayFeedbackGain = audioCtx.createGain();
+    delayWetGain = audioCtx.createGain();
+
+    reverbConvolver = audioCtx.createConvolver();
+    reverbConvolver.buffer = reverbImpulseBuffer;
+    reverbWetGain = audioCtx.createGain();
+
+    synthDynamicsInputBus = audioCtx.createGain();
+
     driveNode = audioCtx.createWaveShaper();
-    driveNode.oversample = "2x";
+    driveNode.oversample = "4x";
+
+    driveSmoothingFilter = audioCtx.createBiquadFilter();
+    driveSmoothingFilter.type = "lowpass";
+    driveSmoothingFilter.frequency.value = 9000;
+    driveSmoothingFilter.Q.value = 0.5;
 
     compressorNode = audioCtx.createDynamicsCompressor();
 
@@ -1359,45 +1396,69 @@ function initAudio() {
     gateGainNode = audioCtx.createGain();
     gateGainNode.gain.value = 1.0;
 
-    eqSpectrumAnalyser = audioCtx.createAnalyser();
-    eqSpectrumAnalyser.fftSize = 512;
-    eqSpectrumAnalyser.smoothingTimeConstant = 0.82;
-    eqSpectrumData = new Uint8Array(eqSpectrumAnalyser.frequencyBinCount);
-
-    // Wire Synth Space Bus -> Shared EQ/Dynamics Bus
+    // Wire Synth Space -> Synth Dynamics (4x Drive -> 9kHz Smooth -> Compressor -> Gate) -> 3-Band EQ
     synthSpaceInputBus.connect(synthDryGain);
-    synthDryGain.connect(sharedFxInputBus);
+    synthDryGain.connect(synthDynamicsInputBus);
 
     synthSpaceInputBus.connect(delayNode);
     delayNode.connect(delayFeedbackGain);
     delayFeedbackGain.connect(delayNode);
     delayNode.connect(delayWetGain);
-    delayWetGain.connect(sharedFxInputBus);
+    delayWetGain.connect(synthDynamicsInputBus);
 
     synthSpaceInputBus.connect(reverbConvolver);
     reverbConvolver.connect(reverbWetGain);
-    reverbWetGain.connect(sharedFxInputBus);
+    reverbWetGain.connect(synthDynamicsInputBus);
 
-    // Wire Drum Space Bus -> Shared EQ/Dynamics Bus
+    synthDynamicsInputBus.connect(driveNode);
+    driveNode.connect(driveSmoothingFilter);
+    driveSmoothingFilter.connect(compressorNode);
+    compressorNode.connect(gateAnalyserNode);
+    gateAnalyserNode.connect(gateGainNode);
+    gateGainNode.connect(eqBassFilter);
+
+    // 2. DEDICATED DRUM BUS WITH TRANSPARENT PEAK LIMITER
+    // (Prevents loud Kicks from ducking Hi-Hats/Snares and keeps drum transients un-gated)
+    drumBusInput = audioCtx.createGain();
+    drumBusInput.gain.value = 0.95;
+
+    drumBusLimiter = audioCtx.createDynamicsCompressor();
+    drumBusLimiter.threshold.value = -3.0;
+    drumBusLimiter.knee.value = 2.0;
+    drumBusLimiter.ratio.value = 12.0;
+    drumBusLimiter.attack.value = 0.003;
+    drumBusLimiter.release.value = 0.08;
+
+    drumDelayInputBus = audioCtx.createGain();
+    drumDelayNode = audioCtx.createDelay(1.0);
+    drumDelayNode.delayTime.value = getSyncedDelayTimeSeconds();
+    drumDelayFeedbackGain = audioCtx.createGain();
+    drumDelayFeedbackGain.gain.value = 0.42;
+    drumGlobalDelayWetGain = audioCtx.createGain();
+
+    drumReverbInputBus = audioCtx.createGain();
+    drumReverbConvolver = audioCtx.createConvolver();
+    drumReverbConvolver.buffer = reverbImpulseBuffer;
+    drumGlobalReverbWetGain = audioCtx.createGain();
+
+    drumBusInput.connect(drumBusLimiter);
+
     drumDelayInputBus.connect(drumDelayNode);
     drumDelayNode.connect(drumDelayFeedbackGain);
     drumDelayFeedbackGain.connect(drumDelayNode);
     drumDelayNode.connect(drumGlobalDelayWetGain);
-    drumGlobalDelayWetGain.connect(sharedFxInputBus);
+    drumGlobalDelayWetGain.connect(drumBusLimiter);
 
     drumReverbInputBus.connect(drumReverbConvolver);
     drumReverbConvolver.connect(drumGlobalReverbWetGain);
-    drumGlobalReverbWetGain.connect(sharedFxInputBus);
+    drumGlobalReverbWetGain.connect(drumBusLimiter);
 
-    // Wire Shared Bus -> 3-Band EQ -> Drive -> Compressor -> Gate -> Spectrum -> Master
-    sharedFxInputBus.connect(eqBassFilter);
+    drumBusLimiter.connect(eqBassFilter);
+
+    // 3. SHARED 3-BAND EQ -> SPECTRUM ANALYSER -> MASTER OUT
     eqBassFilter.connect(eqMidFilter);
     eqMidFilter.connect(eqTrebleFilter);
-    eqTrebleFilter.connect(driveNode);
-    driveNode.connect(compressorNode);
-    compressorNode.connect(gateAnalyserNode);
-    gateAnalyserNode.connect(gateGainNode);
-    gateGainNode.connect(eqSpectrumAnalyser);
+    eqTrebleFilter.connect(eqSpectrumAnalyser);
     eqSpectrumAnalyser.connect(masterBusGain);
 
     updateMasterFxParams();
@@ -1492,7 +1553,6 @@ function updateMasterFxParams() {
     reverbWetGain.gain.setTargetAtTime(revAmt * 0.85, now, 0.01);
   }
 
-  // Update Drum Sequencer Global Echo & Reverb wet levels
   if (drumGlobalDelayWetGain && drumDelayFeedbackGain) {
     const globalDrumEcho = drumGlobalSpace.echo / 100;
     drumGlobalDelayWetGain.gain.setTargetAtTime(globalDrumEcho * 0.72, now, 0.01);
@@ -1903,20 +1963,35 @@ function recalculateStaticWaveform(channelId) {
         env = tNorm / Math.max(0.001, attackRatio);
       } else if (!isSample) {
         const decRatio = (tNorm - attackRatio) / Math.max(0.001, 1 - attackRatio);
-        env = Math.pow(Math.max(0, 1 - decRatio), 2.4);
+        env = Math.pow(Math.max(0, 1 - decRatio), 2.3);
       } else {
         env = tNorm > 0.9 ? Math.max(0, 1 - (tNorm - 0.9) / 0.1) : 1.0;
+      }
+
+      // Multi-burst envelope preview for Claps
+      if (!isSample && s.engine === "clap" && tNorm < 0.14) {
+        const burst = Math.abs(Math.sin(tNorm * Math.PI * 22));
+        env *= 0.45 + 0.55 * burst;
       }
 
       let raw = 0;
       if (isSample && sampleObj && sampleObj.peaks) {
         raw = samplePeakArray(sampleObj.peaks, tNorm);
+      } else if (s.engine === "metallic") {
+        // 6-oscillator metallic shimmer preview
+        const ratios = [1.0, 1.483, 1.932, 2.546, 3.012, 3.847];
+        let metalSum = 0;
+        for (let r = 0; r < ratios.length; r++) {
+          metalSum += sampleOscillator("square", (s.startFreq / 80) * ratios[r] * tNorm * 5.0);
+        }
+        const pseudoNoise = Math.sin(i * 12.9898) * Math.cos(i * 78.233);
+        raw = (metalSum / ratios.length) * (s.metallicTone || 0.8) + pseudoNoise * (s.noiseMix * 0.55);
       } else {
-        const freqCurve = s.startFreq * Math.pow(Math.max(20, s.endFreq) / s.startFreq, tNorm);
+        const freqCurve = s.startFreq * Math.pow(Math.max(20, s.endFreq) / s.startFreq, Math.pow(tNorm, 0.72));
         const phase = (freqCurve / 55) * tNorm * 4.5;
         const tone = sampleOscillator(s.wave, phase);
         const pseudoNoise = Math.sin(i * 12.9898) * Math.cos(i * 78.233);
-        raw = tone * (1 - s.noiseMix * 0.5) + pseudoNoise * s.noiseMix;
+        raw = tone * (1 - s.noiseMix * 0.45) + pseudoNoise * s.noiseMix;
       }
 
       const highSmooth = Math.min(0.96, Math.max(0.08, s.highCut / 14000));
@@ -2007,7 +2082,7 @@ function drawChannelCanvas(vis, nowTime) {
 }
 
 // ============================================================================
-// DRUM & SYNTH AUDIO ENGINES (SYNTHETIC + SAVED SOUND DESIGN SAMPLES + SPACE)
+// MULTI-STAGE ANALOG DRUM SYNTHESIS & SAVED SAMPLE DRUM ENGINE
 // ============================================================================
 
 function initDrumSettings() {
@@ -2031,8 +2106,8 @@ function isTrackAudible(trackId) {
 }
 
 function connectDrumTrackOutput(outputNode, trackSettings, startTime) {
-  // Dry drum signal always goes to Shared EQ/Dynamics Bus
-  outputNode.connect(sharedFxInputBus);
+  // Dry drum signal goes straight to the dedicated Drum Bus Limiter (never gated/ducked by Synth!)
+  outputNode.connect(drumBusInput);
 
   // Per-track Echo send -> Drum Delay Bus (scaled by Global Drum Echo knob)
   const trackEchoAmt = (trackSettings.echo || 0) / 100;
@@ -2053,20 +2128,62 @@ function connectDrumTrackOutput(outputNode, trackSettings, startTime) {
   }
 }
 
-async function playDrumSound(trackId, when = null, ignoreMuteSolo = false, stepVelocity = 1.0) {
+function createNoiseSourceWithRandomOffset(startTime, durationSec) {
+  const noise = audioCtx.createBufferSource();
+  noise.buffer = noiseBuffer;
+  // Randomize start offset inside the 4-second noise buffer so simultaneous hits never phase-cancel
+  const maxOffset = Math.max(0.1, noiseBuffer.duration - durationSec - 0.1);
+  const randomOffset = Math.random() * Math.min(2.5, maxOffset);
+  noise.start(startTime, randomOffset);
+  noise.stop(startTime + durationSec + 0.03);
+  return noise;
+}
+
+function makeSoftClipCurve(warmth = 0.3) {
+  const n = 2048;
+  const curve = new Float32Array(n);
+  const drive = 1 + warmth * 2.6;
+  const norm = Math.tanh(drive);
+  for (let i = 0; i < n; i++) {
+    const x = (i * 2) / n - 1;
+    curve[i] = Math.tanh(x * drive) / norm;
+  }
+  return curve;
+}
+
+function chokeActiveOpenHat(atTime) {
+  if (!activeOpenHatVoice || !audioCtx) return;
+  try {
+    const { gainNode, stopTime } = activeOpenHatVoice;
+    if (atTime < stopTime) {
+      gainNode.gain.cancelScheduledValues(atTime);
+      gainNode.gain.setValueAtTime(Math.max(0.0001, gainNode.gain.value), atTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.0001, atTime + 0.018);
+    }
+  } catch (_) {
+    // Ignore already finished nodes
+  }
+  activeOpenHatVoice = null;
+}
+
+async function playDrumSound(trackId, when = null, ignoreMuteSolo = false, stepVelocity = 0.85) {
   initAudio();
   if (!ignoreMuteSolo && !isTrackAudible(trackId)) return;
 
   const s = drumSettings[trackId];
   if (!s || s.volume <= 0.01) return;
 
-  const vel = Math.max(0.1, Math.min(1.0, Number(stepVelocity) || 1.0));
+  const vel = Math.max(0.1, Math.min(1.0, Number(stepVelocity) || 0.85));
   const effectiveVolume = s.volume * vel;
-  // Slightly open the high-cut filter on louder hits for natural acoustic velocity dynamics
   const velHighCut = Math.min(18000, s.highCut * (0.72 + 0.28 * vel));
 
   const startTime = when !== null ? when : audioCtx.currentTime;
   const attack = Math.max(0.001, s.attack);
+
+  // Closed Hat automatically chokes any ringing Open Hat just like real hi-hat pedals
+  if (trackId === "hihat") {
+    chokeActiveOpenHat(startTime);
+  }
 
   const lowCutFilter = audioCtx.createBiquadFilter();
   lowCutFilter.type = "highpass";
@@ -2097,7 +2214,6 @@ async function playDrumSound(trackId, when = null, ignoreMuteSolo = false, stepV
     const sdParams = sd && sd.params ? sd.params : {};
     const sdBypass = sd && sd.bypass ? sd.bypass : {};
 
-    // 1. Saved OSC Tuning (Pitch & Detune)
     const pitchSemis = !sd || sdBypass.tuning ? 0 : (sdParams.pitch || 0);
     const detuneCents = !sd || sdBypass.tuning ? 0 : (sdParams.detune || 0);
     const pitchRatio = Math.max(0.25, Math.min(4.0, Math.pow(2, pitchSemis / 12)));
@@ -2128,7 +2244,6 @@ async function playDrumSound(trackId, when = null, ignoreMuteSolo = false, stepV
 
     let chainNode = sourceMixer;
 
-    // 2. Saved Filter & LFO Modulation
     if (sd && !sdBypass.filter) {
       const filter = audioCtx.createBiquadFilter();
       filter.type = sd.filterType || "lowpass";
@@ -2154,7 +2269,6 @@ async function playDrumSound(trackId, when = null, ignoreMuteSolo = false, stepV
       chainNode = filter;
     }
 
-    // 3. Saved 3-Band EQ
     if (sd && !sdBypass.eq) {
       const sBass = audioCtx.createBiquadFilter();
       sBass.type = "lowshelf";
@@ -2178,7 +2292,6 @@ async function playDrumSound(trackId, when = null, ignoreMuteSolo = false, stepV
       chainNode = sTreble;
     }
 
-    // 4. Saved Dynamics & Grit (Drive & Compression)
     if (sd && !sdBypass.dynamics) {
       if ((sdParams.drive || 0) > 0.5) {
         const sDrive = audioCtx.createWaveShaper();
@@ -2199,7 +2312,6 @@ async function playDrumSound(trackId, when = null, ignoreMuteSolo = false, stepV
       }
     }
 
-    // 5. Saved ADSR Envelope (or clean drum playback if no saved ADSR)
     const envGain = audioCtx.createGain();
     let totalPlayDur = fixedDur;
 
@@ -2240,41 +2352,274 @@ async function playDrumSound(trackId, when = null, ignoreMuteSolo = false, stepV
     return;
   }
 
-  // Branch B: Standard Synthesized Drum Voice
+  // Branch B: Multi-Stage Studio Analog Drum Synthesis
   const totalTime = attack + s.decay;
+  const engine = s.engine || "tom";
   triggerWaveformPlayhead(trackId, startTime, Math.max(0.12, totalTime));
 
-  const osc = audioCtx.createOscillator();
-  const oscGain = audioCtx.createGain();
-  osc.type = s.wave;
-  osc.frequency.setValueAtTime(s.startFreq, startTime);
-  osc.frequency.exponentialRampToValueAtTime(Math.max(20, s.endFreq), startTime + totalTime);
-  oscGain.gain.value = 1 - s.noiseMix * 0.5;
-  osc.connect(oscGain);
+  // 1. KICKS: Sub-bass sine body + fast 25ms pitch-click transient + subtle soft-clip warmth
+  if (engine === "kick") {
+    const bodyOsc = audioCtx.createOscillator();
+    bodyOsc.type = s.wave || "sine";
+    bodyOsc.frequency.setValueAtTime(s.startFreq, startTime);
+    bodyOsc.frequency.exponentialRampToValueAtTime(Math.max(24, s.endFreq * 1.15), startTime + 0.045);
+    bodyOsc.frequency.exponentialRampToValueAtTime(Math.max(20, s.endFreq), startTime + totalTime);
 
-  const noise = audioCtx.createBufferSource();
-  noise.buffer = noiseBuffer;
-  const noiseGain = audioCtx.createGain();
-  noiseGain.gain.value = s.noiseMix;
-  noise.connect(noiseGain);
+    // Fast 25ms beater pitch-click transient (160 Hz -> 42 Hz)
+    const clickOsc = audioCtx.createOscillator();
+    clickOsc.type = "triangle";
+    clickOsc.frequency.setValueAtTime(Math.max(160, s.startFreq * 1.15), startTime);
+    clickOsc.frequency.exponentialRampToValueAtTime(42, startTime + 0.025);
+
+    const clickGain = audioCtx.createGain();
+    clickGain.gain.setValueAtTime(0.45 * vel, startTime);
+    clickGain.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.028);
+
+    const kickSum = audioCtx.createGain();
+    kickSum.gain.value = 1.0;
+
+    bodyOsc.connect(kickSum);
+    clickOsc.connect(clickGain);
+    clickGain.connect(kickSum);
+
+    if (s.noiseMix > 0.01) {
+      const beaterNoise = createNoiseSourceWithRandomOffset(startTime, 0.024);
+      const noiseBp = audioCtx.createBiquadFilter();
+      noiseBp.type = "bandpass";
+      noiseBp.frequency.setValueAtTime(1400, startTime);
+      noiseBp.Q.value = 1.4;
+      const noiseGain = audioCtx.createGain();
+      noiseGain.gain.setValueAtTime(s.noiseMix * 0.5, startTime);
+      noiseGain.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.022);
+      beaterNoise.connect(noiseBp);
+      noiseBp.connect(noiseGain);
+      noiseGain.connect(kickSum);
+    }
+
+    const softClip = audioCtx.createWaveShaper();
+    softClip.curve = makeSoftClipCurve(s.warmth || 0.35);
+
+    const envGain = audioCtx.createGain();
+    envGain.gain.setValueAtTime(0.0001, startTime);
+    envGain.gain.linearRampToValueAtTime(effectiveVolume * 1.05, startTime + attack);
+    envGain.gain.exponentialRampToValueAtTime(0.0001, startTime + totalTime);
+
+    kickSum.connect(softClip);
+    softClip.connect(envGain);
+    envGain.connect(lowCutFilter);
+
+    bodyOsc.start(startTime);
+    clickOsc.start(startTime);
+    bodyOsc.stop(startTime + totalTime + 0.03);
+    clickOsc.stop(startTime + 0.035);
+    return;
+  }
+
+  // 2. SNARES: Dual pitched shell oscillators (~185 Hz & ~330 Hz) + bandpass snare-wire noise
+  if (engine === "snare") {
+    const shellLow = audioCtx.createOscillator();
+    shellLow.type = s.wave || "triangle";
+    shellLow.frequency.setValueAtTime(s.startFreq, startTime);
+    shellLow.frequency.exponentialRampToValueAtTime(Math.max(60, s.endFreq), startTime + totalTime * 0.65);
+
+    const shellHigh = audioCtx.createOscillator();
+    shellHigh.type = "sine";
+    shellHigh.frequency.setValueAtTime(s.startFreq * 1.78, startTime);
+    shellHigh.frequency.exponentialRampToValueAtTime(Math.max(110, s.endFreq * 1.65), startTime + totalTime * 0.55);
+
+    const shellGain = audioCtx.createGain();
+    shellGain.gain.setValueAtTime(0.55 * (1 - s.noiseMix * 0.35), startTime);
+    shellGain.gain.exponentialRampToValueAtTime(0.0001, startTime + totalTime * 0.72);
+
+    shellLow.connect(shellGain);
+    shellHigh.connect(shellGain);
+
+    const snareNoise = createNoiseSourceWithRandomOffset(startTime, totalTime);
+    const wireFilter = audioCtx.createBiquadFilter();
+    wireFilter.type = "bandpass";
+    wireFilter.frequency.setValueAtTime(1950, startTime);
+    wireFilter.Q.setValueAtTime(0.85, startTime);
+
+    const wireGain = audioCtx.createGain();
+    wireGain.gain.setValueAtTime(0.0001, startTime);
+    wireGain.gain.linearRampToValueAtTime(s.noiseMix * 0.95, startTime + attack);
+    wireGain.gain.exponentialRampToValueAtTime(0.0001, startTime + totalTime);
+
+    snareNoise.connect(wireFilter);
+    wireFilter.connect(wireGain);
+
+    const masterEnv = audioCtx.createGain();
+    masterEnv.gain.setValueAtTime(effectiveVolume, startTime);
+
+    shellGain.connect(masterEnv);
+    wireGain.connect(masterEnv);
+    masterEnv.connect(lowCutFilter);
+
+    shellLow.start(startTime);
+    shellHigh.start(startTime);
+    shellLow.stop(startTime + totalTime + 0.03);
+    shellHigh.stop(startTime + totalTime + 0.03);
+    return;
+  }
+
+  // 3. CLAPS: Dual pitched body + 3 rapid 12ms transient bursts before the main tail
+  if (engine === "clap") {
+    const spread = s.spreadMs || 0.012;
+    const clapNoise = createNoiseSourceWithRandomOffset(startTime, totalTime + spread * 3);
+
+    const clapBp = audioCtx.createBiquadFilter();
+    clapBp.type = "bandpass";
+    clapBp.frequency.setValueAtTime(1250, startTime);
+    clapBp.Q.setValueAtTime(1.35, startTime);
+
+    const clapEnv = audioCtx.createGain();
+    clapEnv.gain.setValueAtTime(0.0001, startTime);
+
+    // 3 rapid staggered hand-clap bursts (0ms, 12ms, 24ms)
+    for (let b = 0; b < 3; b++) {
+      const bStart = startTime + b * spread;
+      clapEnv.gain.setValueAtTime(0.0001, bStart);
+      clapEnv.gain.linearRampToValueAtTime(effectiveVolume * (0.85 + b * 0.07), bStart + 0.002);
+      clapEnv.gain.exponentialRampToValueAtTime(0.08 * effectiveVolume, bStart + spread * 0.88);
+    }
+
+    // Main reverberant clap tail after the 3rd burst
+    const tailStart = startTime + 3 * spread;
+    clapEnv.gain.setValueAtTime(effectiveVolume, tailStart);
+    clapEnv.gain.exponentialRampToValueAtTime(0.0001, tailStart + s.decay);
+
+    // Subtle dual-body thump underneath the slap
+    const bodyOsc1 = audioCtx.createOscillator();
+    bodyOsc1.type = "triangle";
+    bodyOsc1.frequency.setValueAtTime(s.startFreq, startTime);
+    bodyOsc1.frequency.exponentialRampToValueAtTime(Math.max(80, s.endFreq), startTime + 0.06);
+
+    const bodyGain = audioCtx.createGain();
+    bodyGain.gain.setValueAtTime(effectiveVolume * 0.28, startTime);
+    bodyGain.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.065);
+
+    clapNoise.connect(clapBp);
+    clapBp.connect(clapEnv);
+    clapEnv.connect(lowCutFilter);
+
+    bodyOsc1.connect(bodyGain);
+    bodyGain.connect(lowCutFilter);
+
+    bodyOsc1.start(startTime);
+    bodyOsc1.stop(startTime + 0.075);
+    return;
+  }
+
+  // 4. HATS & CYMBALS: 6 detuned square oscillators through resonant bandpass + high-pass filter
+  if (engine === "metallic") {
+    const metalBus = audioCtx.createGain();
+    metalBus.gain.value = 1.0;
+
+    // Classic TR-808 inharmonic 6-oscillator frequency ratios
+    const ratios = [1.0, 1.483, 1.932, 2.546, 3.012, 3.847];
+    const oscLevel = (s.metallicTone || 0.85) * (0.24 / ratios.length);
+
+    ratios.forEach((ratio) => {
+      const osc = audioCtx.createOscillator();
+      osc.type = "square";
+      osc.frequency.setValueAtTime(s.startFreq * ratio, startTime);
+      osc.frequency.exponentialRampToValueAtTime(Math.max(180, s.endFreq * ratio), startTime + totalTime);
+
+      const g = audioCtx.createGain();
+      g.gain.value = oscLevel;
+      osc.connect(g);
+      g.connect(metalBus);
+
+      osc.start(startTime);
+      osc.stop(startTime + totalTime + 0.03);
+    });
+
+    // Subtle high-frequency air noise blended into the metallic cluster
+    const airNoise = createNoiseSourceWithRandomOffset(startTime, totalTime);
+    const airGain = audioCtx.createGain();
+    airGain.gain.value = s.noiseMix * 0.22;
+    airNoise.connect(airGain);
+    airGain.connect(metalBus);
+
+    // Resonant Bandpass (7.2 kHz) -> High-Pass (5.8 kHz) for crisp metallic shimmer
+    const metalBp = audioCtx.createBiquadFilter();
+    metalBp.type = "bandpass";
+    metalBp.frequency.setValueAtTime(7200, startTime);
+    metalBp.Q.setValueAtTime(1.8, startTime);
+
+    const metalHp = audioCtx.createBiquadFilter();
+    metalHp.type = "highpass";
+    metalHp.frequency.setValueAtTime(5400, startTime);
+
+    const envGain = audioCtx.createGain();
+    envGain.gain.setValueAtTime(0.0001, startTime);
+    envGain.gain.linearRampToValueAtTime(effectiveVolume * 1.15, startTime + attack);
+    envGain.gain.exponentialRampToValueAtTime(0.0001, startTime + totalTime);
+
+    metalBus.connect(metalBp);
+    metalBp.connect(metalHp);
+    metalHp.connect(envGain);
+    envGain.connect(lowCutFilter);
+
+    if (trackId === "openhat") {
+      activeOpenHatVoice = {
+        gainNode: envGain,
+        stopTime: startTime + totalTime
+      };
+    }
+    return;
+  }
+
+  // 5. TOMS: Pitched resonant membrane body + stick transient
+  const tomOsc = audioCtx.createOscillator();
+  tomOsc.type = s.wave || "sine";
+  tomOsc.frequency.setValueAtTime(s.startFreq, startTime);
+  tomOsc.frequency.exponentialRampToValueAtTime(Math.max(30, s.endFreq), startTime + totalTime);
+
+  const tomOvertone = audioCtx.createOscillator();
+  tomOvertone.type = "triangle";
+  tomOvertone.frequency.setValueAtTime(s.startFreq * 1.5, startTime);
+  tomOvertone.frequency.exponentialRampToValueAtTime(Math.max(45, s.endFreq * 1.5), startTime + totalTime * 0.45);
+
+  const overtoneGain = audioCtx.createGain();
+  overtoneGain.gain.setValueAtTime(0.22, startTime);
+  overtoneGain.gain.exponentialRampToValueAtTime(0.0001, startTime + totalTime * 0.45);
+
+  const tomNoise = createNoiseSourceWithRandomOffset(startTime, Math.min(0.05, totalTime));
+  const tomNoiseGain = audioCtx.createGain();
+  tomNoiseGain.gain.setValueAtTime(s.noiseMix * 0.45, startTime);
+  tomNoiseGain.gain.exponentialRampToValueAtTime(0.0001, startTime + Math.min(0.045, totalTime));
 
   const envGain = audioCtx.createGain();
   envGain.gain.setValueAtTime(0.0001, startTime);
   envGain.gain.linearRampToValueAtTime(effectiveVolume, startTime + attack);
   envGain.gain.exponentialRampToValueAtTime(0.0001, startTime + totalTime);
 
-  oscGain.connect(envGain);
-  noiseGain.connect(envGain);
+  tomOsc.connect(envGain);
+  tomOvertone.connect(overtoneGain);
+  overtoneGain.connect(envGain);
+  tomNoise.connect(tomNoiseGain);
+  tomNoiseGain.connect(envGain);
   envGain.connect(lowCutFilter);
 
-  osc.start(startTime);
-  noise.start(startTime);
-  osc.stop(startTime + totalTime + 0.02);
-  noise.stop(startTime + totalTime + 0.02);
+  tomOsc.start(startTime);
+  tomOvertone.start(startTime);
+  tomOsc.stop(startTime + totalTime + 0.03);
+  tomOvertone.stop(startTime + totalTime + 0.03);
 }
 
-async function playSynthNote(baseFreq = 220) {
+// ============================================================================
+// POLYPHONIC SYNTHESIZER ENGINE (STEREO DETUNE, VELOCITY FILTER ENVELOPE & GATE)
+// ============================================================================
+
+async function startSustainedSynthNote(noteId, baseFreq = 220, velocity = 0.88) {
   initAudio();
+
+  // If this key is already held, release the previous voice cleanly first
+  if (activePolyVoices.has(noteId)) {
+    releaseSustainedSynthNote(noteId);
+  }
+
   const now = audioCtx.currentTime;
   const selectedSource = waveSelect.value;
 
@@ -2282,7 +2627,11 @@ async function playSynthNote(baseFreq = 220) {
   const detuneCents = rackState.bypass.tuning ? 0 : rackState.params.detune;
   const shiftedFreq = baseFreq * Math.pow(2, pitchSemis / 12);
 
-  // Branch A: Recorded Mic Sample played with Sample Chopper + Constant-Length Pitch Shifting
+  // Polyphony headroom scaling so chords sound lush without clipping
+  const polyHeadroom = 0.78;
+  const vel = Math.max(0.2, Math.min(1.0, velocity));
+
+  // Branch A: Recorded Mic Sample played polyphonically with Sample Chopper + Granular Pitch-Shift
   if (selectedSource.startsWith("sample:")) {
     const sampleObj = getSampleById(selectedSource);
     if (!sampleObj) return;
@@ -2298,7 +2647,12 @@ async function playSynthNote(baseFreq = 220) {
 
     const sourceMixer = audioCtx.createGain();
     sourceMixer.gain.value = 1.0;
-    srcPrimary.connect(sourceMixer);
+
+    // Subtle stereo spread on twin detuned voice
+    const panPrimary = audioCtx.createStereoPanner();
+    panPrimary.pan.setValueAtTime(Math.abs(detuneCents) > 0.5 ? -0.24 : 0, now);
+    srcPrimary.connect(panPrimary);
+    panPrimary.connect(sourceMixer);
 
     let srcTwin = null;
     if (!rackState.bypass.tuning && Math.abs(detuneCents) > 0.5) {
@@ -2307,55 +2661,57 @@ async function playSynthNote(baseFreq = 220) {
       srcTwin = audioCtx.createBufferSource();
       srcTwin.buffer = twinBuffer;
 
+      const panTwin = audioCtx.createStereoPanner();
+      panTwin.pan.setValueAtTime(0.24, now);
+
       const twinGain = audioCtx.createGain();
       twinGain.gain.value = 0.72;
-      srcTwin.connect(twinGain);
+      srcTwin.connect(panTwin);
+      panTwin.connect(twinGain);
       twinGain.connect(sourceMixer);
-      sourceMixer.gain.value = 0.7;
+      sourceMixer.gain.value = 0.72;
     }
 
     const envGain = audioCtx.createGain();
-    let totalNoteDuration = fixedDur;
+    const { attack, decay, sustain, release } = rackState.params;
+    const peakGain = 0.88 * polyHeadroom * vel;
+    const sustainGain = Math.max(0.001, peakGain * (rackState.bypass.adsr ? 0.9 : sustain));
 
     if (rackState.bypass.adsr) {
       envGain.gain.setValueAtTime(0.0001, now);
-      envGain.gain.linearRampToValueAtTime(0.85, now + 0.008);
-      envGain.gain.setValueAtTime(0.85, now + Math.max(0.01, fixedDur - 0.02));
-      envGain.gain.linearRampToValueAtTime(0.0001, now + fixedDur);
+      envGain.gain.linearRampToValueAtTime(peakGain, now + 0.008);
     } else {
-      const { attack, decay, sustain, release } = rackState.params;
-      const holdTime = Math.max(0.08, fixedDur - (attack + decay));
-      const peakGain = 0.9;
-      const sustainGain = Math.max(0.001, peakGain * sustain);
-      totalNoteDuration = attack + decay + holdTime + release;
-
       envGain.gain.setValueAtTime(0.0001, now);
       envGain.gain.linearRampToValueAtTime(peakGain, now + attack);
       envGain.gain.exponentialRampToValueAtTime(sustainGain, now + attack + decay);
-      envGain.gain.setValueAtTime(sustainGain, now + attack + decay + holdTime);
-      envGain.gain.exponentialRampToValueAtTime(0.0001, now + totalNoteDuration);
     }
 
-    triggerWaveformPlayhead("synth", now, totalNoteDuration);
+    triggerWaveformPlayhead("synth", now, Math.max(0.25, fixedDur));
 
     let lastNode = sourceMixer;
+    let lfoOsc = null;
     if (!rackState.bypass.filter) {
       const filter = audioCtx.createBiquadFilter();
       filter.type = rackState.filterType;
-      filter.frequency.setValueAtTime(rackState.params.cutoff, now);
+      const baseCut = rackState.params.cutoff;
+      const envCutPeak = rackState.filterType === "lowpass"
+        ? Math.min(12000, baseCut * (1 + 0.35 * vel))
+        : baseCut;
+
+      filter.frequency.setValueAtTime(envCutPeak, now);
+      filter.frequency.exponentialRampToValueAtTime(Math.max(60, baseCut), now + Math.max(0.08, decay));
       filter.Q.setValueAtTime(rackState.params.resonance, now);
 
       const modAmt = rackState.params.modDepth;
       if (modAmt > 0) {
-        const lfoOsc = audioCtx.createOscillator();
+        lfoOsc = audioCtx.createOscillator();
         const lfoGain = audioCtx.createGain();
         lfoOsc.type = "sine";
         lfoOsc.frequency.setValueAtTime(1.5 + (modAmt / 100) * 9, now);
-        lfoGain.gain.setValueAtTime((modAmt / 100) * (rackState.params.cutoff * 0.85), now);
+        lfoGain.gain.setValueAtTime((modAmt / 100) * (baseCut * 0.85), now);
         lfoOsc.connect(lfoGain);
         lfoGain.connect(filter.frequency);
         lfoOsc.start(now);
-        lfoOsc.stop(now + totalNoteDuration + 0.05);
       }
 
       lastNode.connect(filter);
@@ -2366,15 +2722,33 @@ async function playSynthNote(baseFreq = 220) {
     envGain.connect(synthSpaceInputBus);
 
     srcPrimary.start(now);
-    srcPrimary.stop(now + totalNoteDuration + 0.05);
-    if (srcTwin) {
-      srcTwin.start(now);
-      srcTwin.stop(now + totalNoteDuration + 0.05);
-    }
+    if (srcTwin) srcTwin.start(now);
+
+    let released = false;
+    const stopRelease = () => {
+      if (released) return;
+      released = true;
+      const relTime = audioCtx.currentTime;
+      const relDur = rackState.bypass.adsr ? 0.05 : Math.max(0.04, release);
+
+      envGain.gain.cancelScheduledValues(relTime);
+      envGain.gain.setValueAtTime(Math.max(0.0001, envGain.gain.value), relTime);
+      envGain.gain.exponentialRampToValueAtTime(0.0001, relTime + relDur);
+
+      try {
+        srcPrimary.stop(relTime + relDur + 0.03);
+        if (srcTwin) srcTwin.stop(relTime + relDur + 0.03);
+        if (lfoOsc) lfoOsc.stop(relTime + relDur + 0.03);
+      } catch (_) {
+        // Ignore if already stopped
+      }
+    };
+
+    activePolyVoices.set(noteId, { stopRelease });
     return;
   }
 
-  // Branch B: Standard Analog Oscillator Wave
+  // Branch B: Stereo-Widened Analog Twin Oscillator Wave with Velocity Filter Envelope
   const oscPrimary = audioCtx.createOscillator();
   oscPrimary.type = selectedSource;
   oscPrimary.frequency.setValueAtTime(shiftedFreq, now);
@@ -2382,7 +2756,11 @@ async function playSynthNote(baseFreq = 220) {
 
   const oscMixer = audioCtx.createGain();
   oscMixer.gain.value = 1.0;
-  oscPrimary.connect(oscMixer);
+
+  const panPrimary = audioCtx.createStereoPanner();
+  panPrimary.pan.setValueAtTime(!rackState.bypass.tuning && Math.abs(detuneCents) > 0.5 ? -0.26 : 0, now);
+  oscPrimary.connect(panPrimary);
+  panPrimary.connect(oscMixer);
 
   let oscTwin = null;
   if (!rackState.bypass.tuning && Math.abs(detuneCents) > 0.5) {
@@ -2391,35 +2769,32 @@ async function playSynthNote(baseFreq = 220) {
     oscTwin.frequency.setValueAtTime(shiftedFreq, now);
     oscTwin.detune.setValueAtTime(detuneCents * 0.5, now);
 
+    const panTwin = audioCtx.createStereoPanner();
+    panTwin.pan.setValueAtTime(0.26, now);
+
     const twinGain = audioCtx.createGain();
     twinGain.gain.value = 0.72;
-    oscTwin.connect(twinGain);
+    oscTwin.connect(panTwin);
+    panTwin.connect(twinGain);
     twinGain.connect(oscMixer);
-    oscMixer.gain.value = 0.68;
+    oscMixer.gain.value = 0.7;
   }
 
   const envGain = audioCtx.createGain();
-  let totalNoteDuration = 0.65;
+  const { attack, decay, sustain, release } = rackState.params;
+  const peakGain = 0.42 * polyHeadroom * vel;
+  const sustainGain = Math.max(0.001, peakGain * (rackState.bypass.adsr ? 0.85 : sustain));
 
   if (rackState.bypass.adsr) {
-    envGain.gain.setValueAtTime(0.32, now);
-    envGain.gain.setValueAtTime(0.32, now + 0.5);
-    envGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.55);
+    envGain.gain.setValueAtTime(0.0001, now);
+    envGain.gain.linearRampToValueAtTime(peakGain * 0.85, now + 0.008);
   } else {
-    const { attack, decay, sustain, release } = rackState.params;
-    const holdTime = 0.25;
-    const peakGain = 0.44;
-    const sustainGain = Math.max(0.001, peakGain * sustain);
-    totalNoteDuration = attack + decay + holdTime + release;
-
     envGain.gain.setValueAtTime(0.0001, now);
     envGain.gain.linearRampToValueAtTime(peakGain, now + attack);
     envGain.gain.exponentialRampToValueAtTime(sustainGain, now + attack + decay);
-    envGain.gain.setValueAtTime(sustainGain, now + attack + decay + holdTime);
-    envGain.gain.exponentialRampToValueAtTime(0.0001, now + totalNoteDuration);
   }
 
-  triggerWaveformPlayhead("synth", now, totalNoteDuration);
+  triggerWaveformPlayhead("synth", now, Math.max(0.45, attack + decay + 0.25));
 
   let lastNode = oscMixer;
   let lfoOsc = null;
@@ -2427,7 +2802,14 @@ async function playSynthNote(baseFreq = 220) {
   if (!rackState.bypass.filter) {
     const filter = audioCtx.createBiquadFilter();
     filter.type = rackState.filterType;
-    filter.frequency.setValueAtTime(rackState.params.cutoff, now);
+    const baseCut = rackState.params.cutoff;
+    // Gentle velocity-sensitive filter envelope sweep for warm analog expressiveness
+    const envCutPeak = rackState.filterType === "lowpass"
+      ? Math.min(12000, baseCut * (1 + 0.38 * vel))
+      : baseCut;
+
+    filter.frequency.setValueAtTime(envCutPeak, now);
+    filter.frequency.exponentialRampToValueAtTime(Math.max(60, baseCut), now + Math.max(0.08, decay));
     filter.Q.setValueAtTime(rackState.params.resonance, now);
 
     const modAmt = rackState.params.modDepth;
@@ -2436,11 +2818,10 @@ async function playSynthNote(baseFreq = 220) {
       const lfoGain = audioCtx.createGain();
       lfoOsc.type = "sine";
       lfoOsc.frequency.setValueAtTime(1.5 + (modAmt / 100) * 9, now);
-      lfoGain.gain.setValueAtTime((modAmt / 100) * (rackState.params.cutoff * 0.85), now);
+      lfoGain.gain.setValueAtTime((modAmt / 100) * (baseCut * 0.85), now);
       lfoOsc.connect(lfoGain);
       lfoGain.connect(filter.frequency);
       lfoOsc.start(now);
-      lfoOsc.stop(now + totalNoteDuration + 0.05);
     }
 
     lastNode.connect(filter);
@@ -2451,11 +2832,45 @@ async function playSynthNote(baseFreq = 220) {
   envGain.connect(synthSpaceInputBus);
 
   oscPrimary.start(now);
-  oscPrimary.stop(now + totalNoteDuration + 0.05);
-  if (oscTwin) {
-    oscTwin.start(now);
-    oscTwin.stop(now + totalNoteDuration + 0.05);
-  }
+  if (oscTwin) oscTwin.start(now);
+
+  let released = false;
+  const stopRelease = () => {
+    if (released) return;
+    released = true;
+    const relTime = audioCtx.currentTime;
+    const relDur = rackState.bypass.adsr ? 0.05 : Math.max(0.04, release);
+
+    envGain.gain.cancelScheduledValues(relTime);
+    envGain.gain.setValueAtTime(Math.max(0.0001, envGain.gain.value), relTime);
+    envGain.gain.exponentialRampToValueAtTime(0.0001, relTime + relDur);
+
+    try {
+      oscPrimary.stop(relTime + relDur + 0.03);
+      if (oscTwin) oscTwin.stop(relTime + relDur + 0.03);
+      if (lfoOsc) lfoOsc.stop(relTime + relDur + 0.03);
+    } catch (_) {
+      // Ignore if already stopped
+    }
+  };
+
+  activePolyVoices.set(noteId, { stopRelease });
+}
+
+function releaseSustainedSynthNote(noteId) {
+  const voice = activePolyVoices.get(noteId);
+  if (!voice) return;
+  voice.stopRelease();
+  activePolyVoices.delete(noteId);
+}
+
+// One-shot trigger helper for mouse clicks on TRIG SYNTH NOTE or sample previews
+async function triggerOneShotSynthNote(baseFreq = 220, holdMs = 340) {
+  const oneShotId = `oneshot_${Date.now()}_${Math.random()}`;
+  await startSustainedSynthNote(oneShotId, baseFreq, 0.9);
+  setTimeout(() => {
+    releaseSustainedSynthNote(oneShotId);
+  }, holdMs);
 }
 
 // ============================================================================
@@ -2696,7 +3111,7 @@ function setupModularRackControls() {
         what: rackState.delaySync === "free"
           ? "Free mode sets Echo delay time to a fixed 280 ms independent of your drum tempo."
           : `Locks Echo repeat timing to ${rackState.delaySync} note subdivisions (${delayMs} ms) at ${bpmInput.value} BPM.`,
-        listen: "Play a synth note alongside the drum loop to hear the echo repeats bounce in perfect rhythmic time.",
+        listen: "Play a synth chord alongside the drum loop to hear the echo repeats bounce in perfect rhythmic time.",
         watch: "Watch the echo ghost pulses shift spacing along the OSC Waveform preview."
       });
     });
@@ -2880,7 +3295,7 @@ function renderDrumEditor() {
       guideData: {
         title: `${track.name} Space • Track Reverb Send`,
         what: `Sends ${track.name} into the Drum Hall Reverb unit (scaled by KIT REV in the toolbar above).`,
-        listen: `Add Reverb to ${track.name} (great on Snare, Clap, or chopped Mic Samples) while keeping Kick dry and tight.`,
+        listen: `Add Reverb to ${track.name} (great on Snare, Clap, Toms, or chopped Mic Samples) while keeping Kick dry and tight.`,
         watch: "Watch the high-frequency shimmer linger on the Live Spectrum analyzer."
       },
       onChange: (v) => {
@@ -2927,11 +3342,17 @@ function createEmptyGridPattern() {
   return empty;
 }
 
-function cloneGridPattern(sourceGrid) {
+// Normalize preset velocities: factory `1` maps to `0.85` (normal hit) so `1.0` stays reserved for user accents
+function cloneGridPattern(sourceGrid, normalizeBinaryHits = false) {
   const copy = {};
   WAVECRAFT_DATA.tracks.forEach((t) => {
     const row = sourceGrid && sourceGrid[t.id] ? sourceGrid[t.id] : [];
-    copy[t.id] = Array.from({ length: 32 }, (_, idx) => Number(row[idx]) || 0);
+    copy[t.id] = Array.from({ length: 32 }, (_, idx) => {
+      const rawVal = Number(row[idx]) || 0;
+      if (rawVal <= 0) return 0;
+      if (normalizeBinaryHits && rawVal === 1) return 0.85;
+      return Math.max(0.15, Math.min(1.0, rawVal));
+    });
   });
   return copy;
 }
@@ -3025,14 +3446,14 @@ function copyCurrentSectionToNext() {
         id: `sec_${nextLetter}`,
         name: nextLetter,
         stepCount: stepCount,
-        grid: cloneGridPattern(gridState)
+        grid: cloneGridPattern(gridState, false)
       });
       targetIdx = sections.length - 1;
     } else {
       targetIdx = 0;
     }
   } else {
-    sections[targetIdx].grid = cloneGridPattern(gridState);
+    sections[targetIdx].grid = cloneGridPattern(gridState, false);
     sections[targetIdx].stepCount = stepCount;
   }
 
@@ -3043,7 +3464,7 @@ function copyCurrentSectionToNext() {
   updateSoundDesignGuide({
     title: `Pattern Arranger • Copied ${fromName} → ${toName}`,
     what: `Duplicated Section ${fromName}'s drum pattern and note velocities into Section ${toName}.`,
-    listen: "Tweak a few step velocities or add a snare fill at the end of this section, then enable CHAIN: ON.",
+    listen: "Tweak a few step velocities or add a tom/snare fill at the end of this section, then enable CHAIN: ON.",
     watch: "Watch the velocity bars inside each pad reflect your copied groove."
   });
 }
@@ -3081,11 +3502,11 @@ function renderGrid() {
     const selectBtn = document.createElement("button");
     selectBtn.className = "track-select-btn";
     selectBtn.style.borderLeft = `4px solid ${track.color}`;
-    selectBtn.textContent = track.name;
+    selectBtn.textContent = `${track.keyShortcut}. ${track.name}`;
     attachLearnHoverHandlers(selectBtn, () => ({
-      title: `Voice Select • ${track.name}`,
+      title: `Voice Select • ${track.name} (Key ${track.keyShortcut})`,
       what: `Selects ${track.name} in the Voice Shaping strip above so you can sculpt its EQ, Attack, Echo, and Reverb.`,
-      listen: `Click ${track.name} and press 'AUDITION VOICE' (or key '${Object.keys(DRUM_KEY_MAP).find((k) => DRUM_KEY_MAP[k] === track.id)}') to hear it.`,
+      listen: `Click ${track.name} and press 'AUDITION VOICE' or key '${track.keyShortcut}' to trigger it live.`,
       watch: `Watch the ${track.name} static waveform preview reshape as you turn its editor knobs.`
     }));
     selectBtn.addEventListener("click", () => {
@@ -3179,7 +3600,7 @@ function renderGrid() {
       });
       recalculateStaticWaveform(track.id);
       renderDrumEditor();
-      playDrumSound(track.id, null, true);
+      playDrumSound(track.id, null, true, 0.85);
     });
 
     const basePreset = track.soundPresets[drumSettings[track.id].presetKey] || track.soundPresets.presetA;
@@ -3226,6 +3647,10 @@ function renderGrid() {
 
     const beatGroup = stepCount === 8 ? 2 : stepCount === 32 ? 8 : 4;
 
+    if (!gridState[track.id]) {
+      gridState[track.id] = Array(32).fill(0);
+    }
+
     for (let step = 0; step < stepCount; step++) {
       const btn = document.createElement("button");
       btn.type = "button";
@@ -3252,7 +3677,7 @@ function renderGrid() {
 
       stepElementsByStep[step].push(btn);
 
-      // Click toggles step ON (at 85% velocity) / OFF; vertical drag or mouse wheel edits velocity (15%–100%)
+      // Click toggles step ON (at 85% normal velocity) / OFF; vertical drag or wheel edits velocity (15%–100%)
       let dragStartY = 0;
       let dragStartVel = 0;
       let didDragVelocity = false;
@@ -3392,7 +3817,8 @@ function scheduleStepEvents(stepIndex, stepTime) {
   }
 
   WAVECRAFT_DATA.tracks.forEach((track) => {
-    const stepVel = Number(gridState[track.id][stepIndex]) || 0;
+    const row = gridState[track.id];
+    const stepVel = row ? Number(row[stepIndex]) || 0 : 0;
     if (stepVel > 0) {
       playDrumSound(track.id, stepTime, false, stepVel);
     }
@@ -3455,6 +3881,10 @@ function loadDefaultPreset(presetKey = "basicRock") {
   const preset = WAVECRAFT_DATA.presets[presetKey];
   if (!preset) return;
 
+  if (factoryPresetSelect) {
+    factoryPresetSelect.value = presetKey;
+  }
+
   bpmInput.value = preset.bpm;
   waveSelect.value = preset.waveform;
 
@@ -3480,14 +3910,13 @@ function loadDefaultPreset(presetKey = "basicRock") {
   renderModularRack();
   updateMasterFxParams();
 
-  const initialPatternA = cloneGridPattern(preset.pattern);
-  const initialPatternB = createEmptyGridPattern();
-  // Seed Section B with a subtle variation so switching A/B immediately works out of the box
-  WAVECRAFT_DATA.tracks.forEach((t) => {
-    initialPatternB[t.id] = [...initialPatternA[t.id]];
-  });
-  initialPatternB.clap[14] = 0.8;
-  initialPatternB.hihat[15] = 0.7;
+  // Map binary 1s in factory presets to 0.85 normal hit velocity (reserving 1.0 for accents)
+  const initialPatternA = cloneGridPattern(preset.pattern, true);
+  const initialPatternB = cloneGridPattern(preset.pattern, true);
+  // Seed Section B with a subtle tom/clap fill variation
+  if (initialPatternB.clap) initialPatternB.clap[14] = 0.82;
+  if (initialPatternB.lowtom) initialPatternB.lowtom[15] = 0.88;
+  if (initialPatternB.midtom) initialPatternB.midtom[13] = 0.82;
 
   sections = [
     { id: "sec_A", name: "A", stepCount: stepCount, grid: initialPatternA },
@@ -3501,68 +3930,88 @@ function loadDefaultPreset(presetKey = "basicRock") {
 }
 
 function generateSmartGroove() {
-  const kick = Array(32).fill(0);
-  const snare = Array(32).fill(0);
-  const hihat = Array(32).fill(0);
-  const clap = Array(32).fill(0);
-
+  const newGrid = createEmptyGridPattern();
   const grooveStyle = Math.floor(Math.random() * 3);
 
   for (let bar = 0; bar < 2; bar++) {
     const offset = bar * 16;
-    kick[offset + 0] = 1.0;
+
+    // 1. Kick
+    newGrid.kick[offset + 0] = 0.96;
     if (grooveStyle === 0) {
-      kick[offset + 4] = 0.9;
-      kick[offset + 8] = 0.95;
-      kick[offset + 12] = 0.9;
-      if (Math.random() > 0.5) kick[offset + 14] = 0.65;
+      newGrid.kick[offset + 4] = 0.86;
+      newGrid.kick[offset + 8] = 0.92;
+      newGrid.kick[offset + 12] = 0.86;
+      if (Math.random() > 0.5) newGrid.kick[offset + 14] = 0.65;
     } else if (grooveStyle === 1) {
-      if (Math.random() > 0.35) kick[offset + 3] = 0.7;
-      kick[offset + 6] = 0.9;
-      if (Math.random() > 0.3) kick[offset + 10] = 0.85;
-      if (Math.random() > 0.65) kick[offset + 13] = 0.6;
+      if (Math.random() > 0.35) newGrid.kick[offset + 3] = 0.72;
+      newGrid.kick[offset + 6] = 0.88;
+      if (Math.random() > 0.3) newGrid.kick[offset + 10] = 0.85;
+      if (Math.random() > 0.65) newGrid.kick[offset + 13] = 0.6;
     } else {
-      if (Math.random() > 0.3) kick[offset + 3] = 0.75;
-      if (Math.random() > 0.4) kick[offset + 7] = 0.7;
-      kick[offset + 10] = 0.9;
+      if (Math.random() > 0.3) newGrid.kick[offset + 3] = 0.76;
+      if (Math.random() > 0.4) newGrid.kick[offset + 7] = 0.72;
+      newGrid.kick[offset + 10] = 0.88;
     }
 
+    // 2. Snare
     if (grooveStyle === 2) {
-      snare[offset + 8] = 1.0;
-      if (Math.random() > 0.5) snare[offset + 14] = 0.55;
+      newGrid.snare[offset + 8] = 0.95;
+      if (Math.random() > 0.5) newGrid.snare[offset + 14] = 0.56;
     } else {
-      snare[offset + 4] = 0.95;
-      snare[offset + 12] = 1.0;
-      if (Math.random() > 0.6) snare[offset + 15] = 0.5;
+      newGrid.snare[offset + 4] = 0.92;
+      newGrid.snare[offset + 12] = 0.96;
+      if (Math.random() > 0.6) newGrid.snare[offset + 15] = 0.52;
     }
 
+    // 3. Closed Hat & 4. Open Hat (non-overlapping so open hat breathes before next closed hat)
     const hatDensity = Math.random();
     for (let s = 0; s < 16; s++) {
       const isOffbeat = s % 4 === 2;
-      const accentVel = isOffbeat ? 0.9 : 0.55;
+      const accentVel = isOffbeat ? 0.86 : 0.54;
       if (hatDensity < 0.35) {
-        hihat[offset + s] = isOffbeat ? 0.9 : 0;
+        newGrid.hihat[offset + s] = isOffbeat ? 0.86 : 0;
       } else if (hatDensity < 0.75) {
-        hihat[offset + s] = s % 2 === 0 || (s >= 12 && Math.random() > 0.45) ? accentVel : 0;
+        newGrid.hihat[offset + s] = s % 2 === 0 || (s >= 12 && Math.random() > 0.45) ? accentVel : 0;
       } else {
-        hihat[offset + s] = Math.random() > 0.15 ? (s % 2 === 0 ? 0.85 : 0.48) : 0;
+        newGrid.hihat[offset + s] = Math.random() > 0.15 ? (s % 2 === 0 ? 0.84 : 0.48) : 0;
       }
     }
 
-    if (Math.random() > 0.35) clap[offset + 12] = 0.92;
-    if (Math.random() > 0.55) clap[offset + 4] = 0.78;
-    if (Math.random() > 0.65) clap[offset + 14] = 0.6;
+    if (Math.random() > 0.3) {
+      newGrid.hihat[offset + 14] = 0;
+      newGrid.openhat[offset + 14] = 0.82;
+    }
+
+    // 5. Clap
+    if (Math.random() > 0.35) newGrid.clap[offset + 12] = 0.88;
+    if (Math.random() > 0.55) newGrid.clap[offset + 4] = 0.76;
+
+    // 6. Low Tom & 7. Mid Tom (syncopated percussion & bar-end fills)
+    if (Math.random() > 0.4) {
+      newGrid.midtom[offset + 11] = 0.74;
+      newGrid.lowtom[offset + 15] = 0.82;
+    }
+    if (bar === 1 && Math.random() > 0.35) {
+      newGrid.midtom[offset + 13] = 0.78;
+      newGrid.lowtom[offset + 14] = 0.85;
+    }
+
+    // 8. Crash on Bar 1 downbeat
+    if (bar === 0 && Math.random() > 0.35) {
+      newGrid.crash[offset + 0] = 0.82;
+    }
   }
 
-  gridState = { kick, snare, hihat, clap };
+  gridState = newGrid;
   if (sections[activeSectionIndex]) {
     sections[activeSectionIndex].grid = gridState;
   }
   renderGrid();
   updateSoundDesignGuide({
-    title: "Pattern Generator • Dynamic Velocity Groove",
-    what: "Programmed a 32-step groove with accented downbeats and softer ghost hits.",
-    listen: "Notice how softer ghost hits (48%–65%) give the beat human pocket compared to 100% accents.",
+    title: "Pattern Generator • 8-Track Dynamic Groove",
+    what: "Programmed an 8-voice pattern with accented downbeats, ghost hits, open-hat lifts, and tom fills.",
+    listen: "Notice how softer ghost hits (48%–65%) give the beat human pocket while Open Hats choke on Closed Hats.",
     watch: "Watch the vertical velocity meters inside each active step pad—drag up/down on any pad to fine-tune!"
   });
 }
@@ -3583,14 +4032,28 @@ function setupKeyboardShortcuts() {
 
     if (DRUM_KEY_MAP[key]) {
       e.preventDefault();
-      playDrumSound(DRUM_KEY_MAP[key], null, true);
+      playDrumSound(DRUM_KEY_MAP[key], null, true, 0.88);
       return;
     }
 
     if (SYNTH_KEY_MAP[key]) {
       e.preventDefault();
-      playSynthNote(SYNTH_KEY_MAP[key]);
+      startSustainedSynthNote(`key_${key}`, SYNTH_KEY_MAP[key], 0.88);
     }
+  });
+
+  window.addEventListener("keyup", (e) => {
+    const key = e.key.toLowerCase();
+    if (SYNTH_KEY_MAP[key]) {
+      releaseSustainedSynthNote(`key_${key}`);
+    }
+  });
+
+  // Safety cleanup if browser tab loses focus while keys are held down
+  window.addEventListener("blur", () => {
+    Array.from(activePolyVoices.keys()).forEach((noteId) => {
+      releaseSustainedSynthNote(noteId);
+    });
   });
 }
 
@@ -3610,7 +4073,7 @@ function setupTooltips() {
     attachLearnHoverHandlers(el, () => ({
       title: "Hardware Control Overview",
       what: el.dataset.tip,
-      listen: "Press START / STOP or trigger a synth/drum voice to hear how this control shapes the audio.",
+      listen: "Press START / STOP or hold keys A–K to hear how this control shapes the audio.",
       watch: "Watch the dual phosphor screens respond immediately."
     }));
   });
@@ -3635,7 +4098,7 @@ function setupSamplerAndChopperControls() {
         updateSampleChopperUI();
         recalculateStaticWaveform("synth");
       }
-      playSynthNote(parseFloat(noteSelect.value) || 220);
+      triggerOneShotSynthNote(parseFloat(noteSelect.value) || 220);
     });
   }
 
@@ -3657,7 +4120,6 @@ function setupSamplerAndChopperControls() {
         if (previewRecBtn) previewRecBtn.disabled = false;
         const sampleObj = getSampleById(chosenId);
 
-        // Restore saved sound design settings (or reset to defaults if saved clean)
         applySavedSampleSoundDesign(sampleObj, true);
 
         resetChopMarkers(false);
@@ -3669,7 +4131,7 @@ function setupSamplerAndChopperControls() {
             ? `Loaded "${sampleObj.name}" + saved sound design!`
             : `Loaded "${sampleObj.name}" (default settings).`;
         }
-        playSynthNote(parseFloat(noteSelect.value) || 220);
+        triggerOneShotSynthNote(parseFloat(noteSelect.value) || 220);
       } else {
         updateSaveButtonsEnabledState();
       }
@@ -3741,7 +4203,7 @@ function setupSamplerAndChopperControls() {
       window.removeEventListener("touchmove", onChopPointerMove);
       window.removeEventListener("touchend", onChopPointerUp);
       if (getActiveChopperSample()) {
-        playSynthNote(parseFloat(noteSelect.value) || 220);
+        triggerOneShotSynthNote(parseFloat(noteSelect.value) || 220);
       }
     }
 
@@ -3794,6 +4256,22 @@ function startApp() {
     recalculateStaticWaveform("synth");
   });
 
+  if (factoryPresetSelect) {
+    factoryPresetSelect.addEventListener("change", (e) => {
+      const chosenPreset = e.target.value;
+      loadDefaultPreset(chosenPreset);
+      const presetObj = WAVECRAFT_DATA.presets[chosenPreset];
+      if (presetObj) {
+        updateSoundDesignGuide({
+          title: `Factory Preset • ${presetObj.name}`,
+          what: `Loaded the ${presetObj.name} 8-track drum groove (${presetObj.bpm} BPM, ${presetObj.swing}% swing) and its matched synth patch.`,
+          listen: "Press START / STOP (Spacebar) and play polyphonic chords with keys A–K!",
+          watch: "Watch the 8-track step grid, OSC Waveform, and Master EQ curve update to the new preset."
+        });
+      }
+    });
+  }
+
   waveSelect.addEventListener("change", () => {
     const val = waveSelect.value;
     const isSample = val.startsWith("sample:");
@@ -3804,7 +4282,6 @@ function startApp() {
         sampleLibrarySelect.value = sampleObj.id;
         if (deleteSampleBtn) deleteSampleBtn.disabled = false;
       }
-      // Restore saved sound design settings (or reset to clean defaults for unsaved/plain samples)
       applySavedSampleSoundDesign(sampleObj, true);
     } else {
       resetSampleSoundDesignToDefaults(true);
@@ -3827,12 +4304,19 @@ function startApp() {
     });
   });
 
-  testSynthBtn.addEventListener("click", () => {
+  // Mouse press & hold on TRIG SYNTH NOTE also respects sustain until mouse release
+  testSynthBtn.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
     const noteFreq = parseFloat(noteSelect.value) || 220;
-    playSynthNote(noteFreq);
+    startSustainedSynthNote("btn_trig", noteFreq, 0.9);
+  });
+  window.addEventListener("mouseup", () => {
+    if (activePolyVoices.has("btn_trig")) {
+      releaseSustainedSynthNote("btn_trig");
+    }
   });
 
-  previewDrumBtn.addEventListener("click", () => playDrumSound(selectedTrackId, null, true));
+  previewDrumBtn.addEventListener("click", () => playDrumSound(selectedTrackId, null, true, 0.9));
   inspireBtn.addEventListener("click", generateSmartGroove);
 
   stepsSelect.addEventListener("change", (e) => {

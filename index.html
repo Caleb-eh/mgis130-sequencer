@@ -72,7 +72,7 @@
         <div class="synth-header-bar">
           <div class="synth-title-group">
             <h2>WAVE SYNTHESIZER &amp; MODULAR RACK</h2>
-            <span class="scope-hint">Keys A–K play a C-Major scale • Double-click any knob to reset</span>
+            <span class="scope-hint">Hold keys A–K for polyphonic chords • Double-click any knob to reset</span>
 
             <div class="synth-quick-controls">
               <label class="control-group" data-tip="Selects the basic shape of the sound wave or any recorded mic sample from your library.">
@@ -98,7 +98,7 @@
                 </select>
               </label>
 
-              <button id="test-synth-btn" class="btn btn-amber" data-tip="Play a synthesizer note or active mic sample through all modular effect units below (or press keys A–K).">
+              <button id="test-synth-btn" class="btn btn-amber" data-tip="Play a synthesizer note or active mic sample through all modular effect units below (or hold keys A–K for chords).">
                 TRIG SYNTH NOTE
               </button>
             </div>
@@ -258,7 +258,7 @@
           <div class="rack-module module-amber" id="module-dynamics">
             <div class="module-header">
               <span class="module-title">5. DYNAMICS &amp; GRIT</span>
-              <button type="button" class="bypass-btn active" data-module="dynamics" data-tip="Bypass Drive, Compression, and Noise Gate to A/B test clean vs. gritty tone.">ON</button>
+              <button type="button" class="bypass-btn active" data-module="dynamics" data-tip="Bypass Synth Drive, Compression, and Noise Gate to A/B test clean vs. gritty tone.">ON</button>
             </div>
             <div class="module-knobs" id="knobs-dynamics"></div>
           </div>
@@ -293,6 +293,19 @@
           <h2>RHYTHM COMPOSER &amp; STEP SEQUENCER</h2>
 
           <div class="sequencer-toolbar">
+            <!-- Factory Preset Selector -->
+            <div class="preset-selector-box" data-tip="Factory Presets: load complete 8-track grooves, tempos, swing, and matching synthesizer patches.">
+              <label class="control-group">
+                <span>FACTORY PRESET</span>
+                <select id="factory-preset-select">
+                  <option value="basicRock" selected>Basic Four-on-the-Floor</option>
+                  <option value="chillHipHop">Chill Boom-Bap</option>
+                  <option value="acidElectro">Acid Electro Pulse</option>
+                  <option value="electroTomGroove">808 Electro Tom Groove</option>
+                </select>
+              </label>
+            </div>
+
             <!-- Multi-Section Pattern Arranger (A / B / + Add / Copy / Chain) -->
             <div class="section-arranger-box" id="section-arranger-box" data-tip="Pattern Sections: switch between Sections A, B, C, D to build verses/choruses, add or copy sections, or enable SONG CHAIN to play all sections in order.">
               <span class="section-box-label">SECTIONS</span>
@@ -339,7 +352,7 @@
                 <input type="range" id="swing-slider" min="0" max="60" step="5" value="0" />
               </label>
 
-              <button id="inspire-btn" class="btn btn-secondary" data-tip="Inspire Me: generates a fresh, musically balanced drum groove with strong kicks and crisp backbeats.">PATTERN GEN</button>
+              <button id="inspire-btn" class="btn btn-secondary" data-tip="Inspire Me: generates a fresh, musically balanced 8-track drum groove with strong kicks, crisp backbeats, toms, and cymbals.">PATTERN GEN</button>
               <button id="clear-btn" class="btn btn-ghost" data-tip="Turn off all active steps in the grid.">CLEAR</button>
             </div>
           </div>
@@ -362,7 +375,7 @@
           </div>
         </div>
 
-        <p id="sample-status" class="status-note">Click pads to toggle • Drag up/down (or scroll) on active pads to edit note velocity • Keys 1–4 trigger drums live • Switch Sections A/B or add more above.</p>
+        <p id="sample-status" class="status-note">Click pads to toggle • Drag up/down (or scroll) on active pads to edit note velocity • Keys 1–8 trigger drums live • Closed Hat chokes Open Hat.</p>
         <div id="sequencer-grid" class="sequencer-grid"></div>
       </section>
     </main>

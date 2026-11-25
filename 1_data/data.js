@@ -1,5 +1,6 @@
 // 1_data/data.js
-// DATA LAYER: Holds exaggerated educational DSP ranges, 3-part Sound Design Guide insights, drum presets, and factory patterns.
+// DATA LAYER: Holds exaggerated educational DSP ranges, 3-part Sound Design Guide insights,
+// 8 studio-grade drum voices (3 variations each), and 4 complete factory presets.
 
 const WAVECRAFT_DATA = {
   // Modular Rack Knob Definitions with rich 3-part educational breakdowns (what, listen, watch)
@@ -29,9 +30,9 @@ const WAVECRAFT_DATA = {
           step: 1,
           defaultValue: 0,
           unit: "ct",
-          guideTitle: "Oscillator • Fine Detune & Twin Chorus",
-          what: "Fine-tunes pitch in cents (-100 to +100 ct) and layers a slightly detuned twin oscillator for classic analog chorus.",
-          listen: "Turn away from 0 ct to hear two oscillators beating against each other in a thick, swirling unison.",
+          guideTitle: "Oscillator • Fine Detune & Stereo Twin Chorus",
+          what: "Fine-tunes pitch in cents (-100 to +100 ct) and layers a stereo-widened twin oscillator for rich analog chorus.",
+          listen: "Turn away from 0 ct to hear two oscillators beating against each other in a wide, swirling stereo unison.",
           watch: "Watch phase interference ripples shimmer across the waveform as the twin oscillators drift."
         }
       ]
@@ -75,8 +76,8 @@ const WAVECRAFT_DATA = {
           defaultValue: 0.55,
           unit: "%",
           guideTitle: "ADSR • Sustain Level",
-          what: "Determines the steady volume height held during the middle body of the note.",
-          listen: "At 0%, the note dies out into a sharp pluck; at 100%, it stays at full organ-like loudness.",
+          what: "Determines the steady volume height held while holding a key (A–K) or during the body of a note.",
+          listen: "Hold a key (A–K): at 0%, the note dies out into a sharp pluck; at 100%, it holds at full organ loudness.",
           watch: "Watch the middle plateau of the wave rise or shrink down toward the center line."
         },
         {
@@ -88,8 +89,8 @@ const WAVECRAFT_DATA = {
           defaultValue: 0.35,
           unit: "ms",
           guideTitle: "ADSR • Release Tail",
-          what: "Controls how long the sound takes to fade back to zero after the note finishes.",
-          listen: "Low values cut off abruptly; high values let notes glide and ring out softly.",
+          what: "Controls how long the sound takes to fade back to zero after you release a key or the note ends.",
+          listen: "Low values cut off abruptly when you lift your finger; high values let chords ring out softly.",
           watch: "Watch the right-hand tail of the waveform stretch out into a long, tapering fade."
         }
       ]
@@ -196,9 +197,9 @@ const WAVECRAFT_DATA = {
           step: 1,
           defaultValue: 12,
           unit: "%",
-          guideTitle: "Dynamics • Overdrive Saturation",
-          what: "Pushes the signal into hard analog-style clipping, adding rich harmonic grit and aggression.",
-          listen: "Listen for clean tones transforming into fuzzy, crunchy, distorted synth lead textures.",
+          guideTitle: "Dynamics • 4x Oversampled Overdrive",
+          what: "Pushes the synth into smooth 4x-oversampled analog saturation with warm high-end smoothing.",
+          listen: "Listen for clean tones transforming into warm, crunchy, harmonic-rich distorted synth textures.",
           watch: "Watch the rounded peaks of the wave visibly flatten and square off against the ceiling!"
         },
         {
@@ -209,9 +210,9 @@ const WAVECRAFT_DATA = {
           step: 1,
           defaultValue: 25,
           unit: "%",
-          guideTitle: "Dynamics • Audio Compression",
-          what: "Squashes loud volume peaks while boosting quieter body sections for a thick, consistent level.",
-          listen: "Listen for the quiet decay and sustain portions becoming noticeably fuller and louder.",
+          guideTitle: "Dynamics • Synth Compression",
+          what: "Evens out synthesizer volume peaks while boosting quieter sustain sections (drums use their own clean bus limiter).",
+          listen: "Listen for the quiet decay and sustain portions of synth chords becoming noticeably fuller and louder.",
           watch: "Watch the difference between the tallest peak and the quieter tail even out vertically."
         },
         {
@@ -222,10 +223,10 @@ const WAVECRAFT_DATA = {
           step: 1,
           defaultValue: -72,
           unit: "dB",
-          guideTitle: "Dynamics • Noise Gate Threshold",
-          what: "Acts like an automatic mute switch that clamps shut whenever the wave drops below the dB threshold.",
-          listen: "Raise the gate higher to hear quiet tails abruptly chop off into dead silence.",
-          watch: "Watch the tapering tail of the waveform suddenly snap flat to a straight zero line once it falls below threshold."
+          guideTitle: "Dynamics • Synth Noise Gate Threshold",
+          what: "Clamps shut whenever the synth drops below the dB threshold—isolated from drums so drum transients never get clipped.",
+          listen: "Raise the gate higher to hear quiet synth reverb/release tails abruptly chop off into dead silence.",
+          watch: "Watch the tapering tail of the synth waveform suddenly snap flat to zero once it falls below threshold."
         }
       ]
     },
@@ -254,151 +255,444 @@ const WAVECRAFT_DATA = {
           step: 1,
           defaultValue: 25,
           unit: "%",
-          guideTitle: "Space & Time • Synth Hall Reverb",
-          what: "Simulates thousands of acoustic reflections inside a large hall exclusively for the synthesizer.",
-          listen: "Listen for a lush, atmospheric wash that surrounds the synth while keeping drums dry and punchy.",
+          guideTitle: "Space & Time • Stereo Damped Hall Reverb",
+          what: "Simulates stereo-decorrelated early reflections and warm damped hall tails exclusively for the synthesizer.",
+          listen: "Listen for a lush, wide stereo wash that surrounds the synth while keeping drums punchy.",
           watch: "Watch a dense, shimmering acoustic tail fill the space behind the main synth envelope."
         }
       ]
     }
   },
 
+  // 8 Studio-Grade Drum Voices with 3 Selectable Variations Each (presetA, presetB, presetC)
   tracks: [
     {
       id: "kick",
       name: "Kick",
+      keyShortcut: "1",
       color: "#ea580c",
       soundPresets: {
         presetA: {
           label: "Punchy 808",
+          engine: "kick",
           wave: "sine",
-          startFreq: 135,
-          endFreq: 36,
-          decay: 0.3,
-          noiseMix: 0,
-          volume: 0.85,
-          lowCut: 30,
-          midCut: 0,
-          highCut: 6000,
-          attack: 0.005
+          startFreq: 160,
+          endFreq: 42,
+          decay: 0.34,
+          noiseMix: 0.04,
+          warmth: 0.35,
+          volume: 0.88,
+          lowCut: 28,
+          midCut: -2,
+          highCut: 6500,
+          attack: 0.003
         },
         presetB: {
           label: "Tight 909",
+          engine: "kick",
           wave: "triangle",
-          startFreq: 170,
-          endFreq: 46,
-          decay: 0.17,
-          noiseMix: 0.08,
-          volume: 0.85,
-          lowCut: 45,
-          midCut: -6,
-          highCut: 9000,
+          startFreq: 185,
+          endFreq: 48,
+          decay: 0.21,
+          noiseMix: 0.12,
+          warmth: 0.45,
+          volume: 0.88,
+          lowCut: 42,
+          midCut: -5,
+          highCut: 9500,
           attack: 0.002
+        },
+        presetC: {
+          label: "Sub Boom",
+          engine: "kick",
+          wave: "sine",
+          startFreq: 135,
+          endFreq: 33,
+          decay: 0.52,
+          noiseMix: 0.02,
+          warmth: 0.28,
+          volume: 0.9,
+          lowCut: 24,
+          midCut: -3,
+          highCut: 4200,
+          attack: 0.005
         }
       }
     },
     {
       id: "snare",
       name: "Snare",
+      keyShortcut: "2",
       color: "#f59e0b",
       soundPresets: {
         presetA: {
           label: "Crisp Studio",
+          engine: "snare",
           wave: "triangle",
-          startFreq: 210,
-          endFreq: 110,
-          decay: 0.19,
-          noiseMix: 0.65,
-          volume: 0.75,
+          startFreq: 185,
+          endFreq: 112,
+          decay: 0.2,
+          noiseMix: 0.68,
+          warmth: 0.25,
+          volume: 0.78,
           lowCut: 110,
-          midCut: 0,
-          highCut: 12000,
-          attack: 0.004
+          midCut: 1,
+          highCut: 12500,
+          attack: 0.003
         },
         presetB: {
           label: "Fat Lo-Fi",
+          engine: "snare",
           wave: "sine",
-          startFreq: 175,
-          endFreq: 85,
-          decay: 0.25,
-          noiseMix: 0.45,
-          volume: 0.75,
+          startFreq: 165,
+          endFreq: 88,
+          decay: 0.27,
+          noiseMix: 0.5,
+          warmth: 0.4,
+          volume: 0.78,
           lowCut: 90,
-          midCut: -4,
-          highCut: 4200,
-          attack: 0.015
+          midCut: -3,
+          highCut: 4600,
+          attack: 0.01
+        },
+        presetC: {
+          label: "Gated 80s",
+          engine: "snare",
+          wave: "triangle",
+          startFreq: 205,
+          endFreq: 125,
+          decay: 0.32,
+          noiseMix: 0.82,
+          warmth: 0.35,
+          volume: 0.8,
+          lowCut: 125,
+          midCut: 2,
+          highCut: 14000,
+          attack: 0.002
         }
       }
     },
     {
       id: "hihat",
       name: "Closed Hat",
+      keyShortcut: "3",
       color: "#2dd4bf",
       soundPresets: {
         presetA: {
           label: "Sharp Tick",
+          engine: "metallic",
           wave: "square",
-          startFreq: 950,
-          endFreq: 400,
-          decay: 0.08,
+          startFreq: 800,
+          endFreq: 540,
+          decay: 0.065,
           noiseMix: 0.85,
-          volume: 0.6,
-          lowCut: 400,
+          metallicTone: 0.75,
+          volume: 0.64,
+          lowCut: 480,
           midCut: 0,
-          highCut: 15000,
+          highCut: 15500,
           attack: 0.002
         },
         presetB: {
           label: "Soft Shaker",
+          engine: "metallic",
           wave: "triangle",
-          startFreq: 600,
-          endFreq: 300,
-          decay: 0.12,
-          noiseMix: 0.9,
-          volume: 0.6,
-          lowCut: 650,
-          midCut: -5,
-          highCut: 8500,
-          attack: 0.02
+          startFreq: 640,
+          endFreq: 420,
+          decay: 0.11,
+          noiseMix: 0.92,
+          metallicTone: 0.45,
+          volume: 0.62,
+          lowCut: 750,
+          midCut: -4,
+          highCut: 9200,
+          attack: 0.016
+        },
+        presetC: {
+          label: "Metallic 808",
+          engine: "metallic",
+          wave: "square",
+          startFreq: 960,
+          endFreq: 680,
+          decay: 0.085,
+          noiseMix: 0.7,
+          metallicTone: 1.0,
+          volume: 0.66,
+          lowCut: 560,
+          midCut: 1,
+          highCut: 16000,
+          attack: 0.001
+        }
+      }
+    },
+    {
+      id: "openhat",
+      name: "Open Hat",
+      keyShortcut: "4",
+      color: "#06b6d4",
+      soundPresets: {
+        presetA: {
+          label: "Sizzle 808",
+          engine: "metallic",
+          wave: "square",
+          startFreq: 860,
+          endFreq: 620,
+          decay: 0.36,
+          noiseMix: 0.75,
+          metallicTone: 0.95,
+          volume: 0.62,
+          lowCut: 460,
+          midCut: 0,
+          highCut: 15500,
+          attack: 0.004
+        },
+        presetB: {
+          label: "Trashy 909",
+          engine: "metallic",
+          wave: "square",
+          startFreq: 740,
+          endFreq: 510,
+          decay: 0.44,
+          noiseMix: 0.88,
+          metallicTone: 0.78,
+          volume: 0.64,
+          lowCut: 390,
+          midCut: 2,
+          highCut: 14500,
+          attack: 0.003
+        },
+        presetC: {
+          label: "Half-Open Crisp",
+          engine: "metallic",
+          wave: "square",
+          startFreq: 920,
+          endFreq: 650,
+          decay: 0.22,
+          noiseMix: 0.78,
+          metallicTone: 0.88,
+          volume: 0.62,
+          lowCut: 540,
+          midCut: -1,
+          highCut: 15000,
+          attack: 0.002
         }
       }
     },
     {
       id: "clap",
       name: "Clap",
+      keyShortcut: "5",
       color: "#ef4444",
       soundPresets: {
         presetA: {
           label: "Classic Snap",
-          wave: "sawtooth",
-          startFreq: 340,
-          endFreq: 160,
-          decay: 0.2,
-          noiseMix: 0.8,
-          volume: 0.7,
-          lowCut: 220,
-          midCut: 0,
-          highCut: 11000,
-          attack: 0.008
+          engine: "clap",
+          wave: "triangle",
+          startFreq: 320,
+          endFreq: 165,
+          decay: 0.21,
+          noiseMix: 0.88,
+          spreadMs: 0.012,
+          volume: 0.74,
+          lowCut: 240,
+          midCut: 1,
+          highCut: 11500,
+          attack: 0.003
         },
         presetB: {
           label: "Wide Room",
+          engine: "clap",
           wave: "triangle",
-          startFreq: 280,
-          endFreq: 130,
-          decay: 0.28,
+          startFreq: 275,
+          endFreq: 135,
+          decay: 0.31,
+          noiseMix: 0.92,
+          spreadMs: 0.016,
+          volume: 0.74,
+          lowCut: 190,
+          midCut: -4,
+          highCut: 8400,
+          attack: 0.006
+        },
+        presetC: {
+          label: "Tight Electro",
+          engine: "clap",
+          wave: "sawtooth",
+          startFreq: 390,
+          endFreq: 190,
+          decay: 0.14,
           noiseMix: 0.85,
-          volume: 0.7,
-          lowCut: 180,
-          midCut: -6,
+          spreadMs: 0.009,
+          volume: 0.74,
+          lowCut: 310,
+          midCut: 2,
+          highCut: 13500,
+          attack: 0.002
+        }
+      }
+    },
+    {
+      id: "lowtom",
+      name: "Low Tom",
+      keyShortcut: "6",
+      color: "#f97316",
+      soundPresets: {
+        presetA: {
+          label: "Deep 808 Tom",
+          engine: "tom",
+          wave: "sine",
+          startFreq: 145,
+          endFreq: 68,
+          decay: 0.34,
+          noiseMix: 0.08,
+          warmth: 0.25,
+          volume: 0.78,
+          lowCut: 50,
+          midCut: -2,
+          highCut: 5200,
+          attack: 0.003
+        },
+        presetB: {
+          label: "Acoustic Floor",
+          engine: "tom",
+          wave: "triangle",
+          startFreq: 165,
+          endFreq: 76,
+          decay: 0.38,
+          noiseMix: 0.22,
+          warmth: 0.3,
+          volume: 0.78,
+          lowCut: 58,
+          midCut: -4,
+          highCut: 6800,
+          attack: 0.004
+        },
+        presetC: {
+          label: "Pitched Zap",
+          engine: "tom",
+          wave: "sine",
+          startFreq: 240,
+          endFreq: 55,
+          decay: 0.26,
+          noiseMix: 0.05,
+          warmth: 0.4,
+          volume: 0.78,
+          lowCut: 45,
+          midCut: 1,
           highCut: 7500,
-          attack: 0.018
+          attack: 0.002
+        }
+      }
+    },
+    {
+      id: "midtom",
+      name: "Mid Tom",
+      keyShortcut: "7",
+      color: "#eab308",
+      soundPresets: {
+        presetA: {
+          label: "Punchy Rack Tom",
+          engine: "tom",
+          wave: "sine",
+          startFreq: 215,
+          endFreq: 108,
+          decay: 0.26,
+          noiseMix: 0.12,
+          warmth: 0.25,
+          volume: 0.75,
+          lowCut: 85,
+          midCut: 0,
+          highCut: 6800,
+          attack: 0.003
+        },
+        presetB: {
+          label: "Hollow Synth Tom",
+          engine: "tom",
+          wave: "triangle",
+          startFreq: 245,
+          endFreq: 122,
+          decay: 0.28,
+          noiseMix: 0.16,
+          warmth: 0.35,
+          volume: 0.75,
+          lowCut: 95,
+          midCut: 2,
+          highCut: 8200,
+          attack: 0.003
+        },
+        presetC: {
+          label: "Disco Sweep",
+          engine: "tom",
+          wave: "sine",
+          startFreq: 340,
+          endFreq: 96,
+          decay: 0.31,
+          noiseMix: 0.08,
+          warmth: 0.3,
+          volume: 0.76,
+          lowCut: 80,
+          midCut: 1,
+          highCut: 9000,
+          attack: 0.002
+        }
+      }
+    },
+    {
+      id: "crash",
+      name: "Crash",
+      keyShortcut: "8",
+      color: "#a855f7",
+      soundPresets: {
+        presetA: {
+          label: "Bright Splash",
+          engine: "metallic",
+          wave: "square",
+          startFreq: 1040,
+          endFreq: 720,
+          decay: 0.72,
+          noiseMix: 0.82,
+          metallicTone: 0.92,
+          volume: 0.62,
+          lowCut: 420,
+          midCut: 1,
+          highCut: 16000,
+          attack: 0.005
+        },
+        presetB: {
+          label: "Dark Wash",
+          engine: "metallic",
+          wave: "square",
+          startFreq: 760,
+          endFreq: 510,
+          decay: 0.92,
+          noiseMix: 0.86,
+          metallicTone: 0.85,
+          volume: 0.62,
+          lowCut: 340,
+          midCut: -3,
+          highCut: 10800,
+          attack: 0.012
+        },
+        presetC: {
+          label: "Lo-Fi Trash",
+          engine: "metallic",
+          wave: "square",
+          startFreq: 880,
+          endFreq: 590,
+          decay: 0.58,
+          noiseMix: 0.94,
+          metallicTone: 0.75,
+          volume: 0.64,
+          lowCut: 520,
+          midCut: 3,
+          highCut: 7800,
+          attack: 0.004
         }
       }
     }
   ],
 
-  // 32-step factory patterns + full modular rack parameter snapshots
+  // 32-step factory patterns across all 8 tracks + full modular rack parameter snapshots
   presets: {
     basicRock: {
       name: "Basic Four-on-the-Floor",
@@ -427,10 +721,14 @@ const WAVECRAFT_DATA = {
         reverb: 22
       },
       pattern: {
-        kick:  [1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0],
-        snare: [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0],
-        hihat: [1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0],
-        clap:  [0,0,0,0, 0,0,0,0, 0,0,0,0, 1,0,1,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 1,0,1,0]
+        kick:    [1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0],
+        snare:   [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0],
+        hihat:   [1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,0,0, 1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,0,0],
+        openhat: [0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,1,0],
+        clap:    [0,0,0,0, 0,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 1,0,0,0],
+        lowtom:  [0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,1,0],
+        midtom:  [0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 1,0,0,0],
+        crash:   [1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0]
       }
     },
     chillHipHop: {
@@ -460,10 +758,14 @@ const WAVECRAFT_DATA = {
         reverb: 38
       },
       pattern: {
-        kick:  [1,0,0,1, 0,0,1,0, 0,0,1,0, 0,0,0,0, 1,0,0,1, 0,0,1,0, 0,0,1,0, 0,0,0,0],
-        snare: [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,1, 0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,1],
-        hihat: [1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1],
-        clap:  [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]
+        kick:    [1,0,0,1, 0,0,1,0, 0,0,1,0, 0,0,0,0, 1,0,0,1, 0,0,1,0, 0,0,1,0, 0,0,0,0],
+        snare:   [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,1, 0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,1],
+        hihat:   [1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,0,0, 1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,0,0],
+        openhat: [0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,1,0],
+        clap:    [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0],
+        lowtom:  [0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1],
+        midtom:  [0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,1,0,0],
+        crash:   [1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0]
       }
     },
     acidElectro: {
@@ -493,10 +795,51 @@ const WAVECRAFT_DATA = {
         reverb: 24
       },
       pattern: {
-        kick:  [1,0,0,0, 1,0,0,1, 0,0,1,0, 1,0,0,0, 1,0,0,0, 1,0,0,1, 0,0,1,0, 1,0,1,0],
-        snare: [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0],
-        hihat: [0,0,1,0, 0,0,1,0, 0,0,1,0, 0,0,1,1, 0,0,1,0, 0,0,1,0, 0,0,1,0, 0,1,1,1],
-        clap:  [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]
+        kick:    [1,0,0,0, 1,0,0,1, 0,0,1,0, 1,0,0,0, 1,0,0,0, 1,0,0,1, 0,0,1,0, 1,0,1,0],
+        snare:   [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0],
+        hihat:   [0,0,1,0, 0,0,1,0, 0,0,1,0, 0,0,1,1, 0,0,1,0, 0,0,1,0, 0,0,1,0, 0,1,1,0],
+        openhat: [0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1],
+        clap:    [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0],
+        lowtom:  [0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,1,0],
+        midtom:  [0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1, 0,0,0,0],
+        crash:   [1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0]
+      }
+    },
+    electroTomGroove: {
+      name: "808 Electro Tom Groove",
+      bpm: 126,
+      swing: 8,
+      delaySync: "1/8",
+      waveform: "sawtooth",
+      filterType: "lowpass",
+      rackParams: {
+        pitch: -12,
+        detune: 18,
+        attack: 0.012,
+        decay: 0.22,
+        sustain: 0.42,
+        release: 0.28,
+        cutoff: 1950,
+        resonance: 9.5,
+        modDepth: 42,
+        eqBass: 4.0,
+        eqMid: 1.0,
+        eqTreble: 2.5,
+        drive: 34,
+        compression: 40,
+        gate: -64,
+        echo: 28,
+        reverb: 26
+      },
+      pattern: {
+        kick:    [1,0,0,1, 0,0,1,0, 0,0,1,0, 0,0,0,0, 1,0,0,1, 0,0,1,0, 0,0,1,0, 0,0,0,0],
+        snare:   [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0],
+        hihat:   [1,0,1,0, 1,0,1,1, 1,0,1,0, 1,0,0,0, 1,0,1,0, 1,0,1,1, 1,0,1,0, 1,0,0,0],
+        openhat: [0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,1,0],
+        clap:    [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0],
+        lowtom:  [0,0,0,0, 0,0,0,0, 0,0,0,1, 0,0,1,0, 0,0,0,0, 0,0,0,0, 0,0,0,1, 0,0,1,1],
+        midtom:  [0,0,0,0, 0,0,0,0, 0,1,0,0, 0,1,0,0, 0,0,0,0, 0,0,0,0, 0,1,0,0, 1,1,0,0],
+        crash:   [1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0]
       }
     }
   }
