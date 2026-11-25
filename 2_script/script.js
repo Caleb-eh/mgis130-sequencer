@@ -1,7 +1,7 @@
 // 2_script/script.js
 // PROCESSING & PRESENTATION: Lookahead scheduler, dry metronome, Pitch/Detune twin oscillator,
-// Mic Sampler & localStorage Sample Library, 3-Band EQ BiquadFilterNode chain,
-// Live EQ Frequency Response + Spectrum Visualizer, and static wave previews.
+// Mic Sampler, Interactive Sample Chopper, Constant-Length Granular Pitch-Shifter,
+// localStorage Sample Library, 3-Band EQ BiquadFilterNode chain, and static wave previews.
 
 let audioCtx = null;
 let noiseBuffer = null;
@@ -62,7 +62,7 @@ for (let i = 0; i < EQ_GRAPH_POINTS; i++) {
 }
 
 // ============================================================================
-// MIC SAMPLER & LOCALSTORAGE LIBRARY STATE
+// MIC SAMPLER, SAMPLE CHOPPER & LOCALSTORAGE LIBRARY STATE
 // ============================================================================
 
 const SAMPLE_STORAGE_KEY = "wavecraft_wc808_sample_library_v1";
@@ -70,12 +70,19 @@ const SAMPLE_EXPORT_RATE = 22050; // Compact mono 22.05 kHz 16-bit WAV (~88 KB p
 
 let savedSamples = []; // Array of { id, name, duration, wavDataUrl, peaks }
 const decodedSampleBuffers = {}; // Cache: { [sampleId]: AudioBuffer }
+const pitchShiftedBufferCache = {}; // Cache: { [cacheKey]: AudioBuffer }
 let pendingRecording = null; // Unsaved recording: { floatData, sampleRate, duration, peaks, tempBuffer }
 let isRecordingMic = false;
 let activeMicStream = null;
 let activeMicSource = null;
 let activeMicProcessor = null;
 let recCountdownTimer = null;
+
+// Sample Chopper Trim State (0.0 to 1.0 normalized start/end)
+let chopStartRatio = 0.0;
+let chopEndRatio = 1.0;
+let isDraggingChopCanvas = false;
+let chopDragAnchorRatio = 0.0;
 
 // Sequencer & Drum Settings State
 let stepCount = 16;
@@ -139,7 +146,7 @@ const drumKnobsContainer = document.getElementById("drum-knobs-container");
 const editorTrackBadge = document.getElementById("editor-track-badge");
 const editorTrackTitle = document.getElementById("editor-track-title");
 
-// Mic Sampler & Library DOM References
+// Mic Sampler, Sample Chopper & Library DOM References
 const recLengthSelect = document.getElementById("rec-length-select");
 const recMicBtn = document.getElementById("rec-mic-btn");
 const previewRecBtn = document.getElementById("preview-rec-btn");
@@ -149,6 +156,16 @@ const saveSampleBtn = document.getElementById("save-sample-btn");
 const libraryCountEl = document.getElementById("library-count");
 const sampleLibrarySelect = document.getElementById("sample-library-select");
 const deleteSampleBtn = document.getElementById("delete-sample-btn");
+
+const sampleChopCanvas = document.getElementById("sample-chop-canvas");
+const sampleChopCtx = sampleChopCanvas ? sampleChopCanvas.getContext("2d") : null;
+const chopRangeReadout = document.getElementById("chop-range-readout");
+const chopStartSlider = document.getElementById("chop-start-slider");
+const chopEndSlider = document.getElementById("chop-end-slider");
+const chopStartVal = document.getElementById("chop-start-val");
+const chopEndVal = document.getElementById("chop-end-val");
+const resetChopBtn = document.getElementById("reset-chop-btn");
+const applyChopBtn = document.getElementById("apply-chop-btn");
 
 // Interactive Sound Design Guide & Dropdown Drawer DOM elements
 const learnToggleBtn = document.getElementById("learn-toggle-btn");
@@ -190,7 +207,6 @@ function computeNormalizedPeaks(floatData, bucketCount = 180) {
   const peaks = new Array(bucketCount).fill(0);
   if (!floatData || floatData.length === 0) return peaks;
 
-  // Normalize peak amplitude so quiet mic recordings display clearly
   let maxAbs = 0.01;
   for (let i = 0; i < floatData.length; i++) {
     const a = Math.abs(floatData[i]);
@@ -283,6 +299,7 @@ function dataUrlToArrayBuffer(dataUrl) {
 
 async function decodeSampleToAudioBuffer(sampleObj) {
   if (!sampleObj) return null;
+  if (sampleObj.audioBuffer) return sampleObj.audioBuffer;
   if (decodedSampleBuffers[sampleObj.id]) {
     return decodedSampleBuffers[sampleObj.id];
   }
@@ -296,6 +313,15 @@ async function decodeSampleToAudioBuffer(sampleObj) {
     console.error("Failed to decode saved sample:", err);
     return null;
   }
+}
+
+function clearPitchCacheForSample(sampleId) {
+  const prefix = `${sampleId}|`;
+  Object.keys(pitchShiftedBufferCache).forEach((k) => {
+    if (k.startsWith(prefix)) {
+      delete pitchShiftedBufferCache[k];
+    }
+  });
 }
 
 function loadSavedSamplesFromStorage() {
@@ -327,7 +353,9 @@ function persistSavedSamplesToStorage() {
 }
 
 function getSampleById(sampleId) {
-  if (sampleId === "unsaved" && pendingRecording) {
+  if (!sampleId) return null;
+  if (sampleId === "unsaved" || sampleId === "sample:unsaved") {
+    if (!pendingRecording) return null;
     return {
       id: "unsaved",
       name: "Unsaved Mic Take",
@@ -340,8 +368,334 @@ function getSampleById(sampleId) {
   return savedSamples.find((s) => s.id === cleanId) || null;
 }
 
+// ============================================================================
+// SAMPLE CHOPPER & CONSTANT-LENGTH GRANULAR PITCH-SHIFTER
+// ============================================================================
+
+function getActiveChopperSample() {
+  if (waveSelect && waveSelect.value.startsWith("sample:")) {
+    return getSampleById(waveSelect.value);
+  }
+  if (pendingRecording) {
+    return getSampleById("unsaved");
+  }
+  if (sampleLibrarySelect && sampleLibrarySelect.value) {
+    return getSampleById(sampleLibrarySelect.value);
+  }
+  return null;
+}
+
+function getChoppedPeaksSlice(peaks, startRatio, endRatio) {
+  if (!peaks || peaks.length === 0) return [];
+  const startIdx = Math.max(0, Math.min(peaks.length - 1, Math.floor(startRatio * peaks.length)));
+  const endIdx = Math.max(startIdx + 1, Math.min(peaks.length, Math.ceil(endRatio * peaks.length)));
+  return peaks.slice(startIdx, endIdx);
+}
+
+function extractChoppedFloatSlice(floatData, sampleRate, startRatio, endRatio) {
+  const startSample = Math.max(0, Math.min(floatData.length - 1, Math.floor(startRatio * floatData.length)));
+  const endSample = Math.max(startSample + 32, Math.min(floatData.length, Math.floor(endRatio * floatData.length)));
+  const sliced = floatData.slice(startSample, endSample);
+
+  // Apply tiny 6 ms fade-in / fade-out so chopped boundaries never click or pop
+  const fadeSamples = Math.min(Math.floor(sampleRate * 0.006), Math.floor(sliced.length / 4));
+  for (let i = 0; i < fadeSamples; i++) {
+    const fadeFactor = i / Math.max(1, fadeSamples);
+    sliced[i] *= fadeFactor;
+    sliced[sliced.length - 1 - i] *= fadeFactor;
+  }
+  return sliced;
+}
+
+/**
+ * Constant-Length Overlap-Add Granular Pitch-Shifter.
+ * Shifts pitch by `pitchRatio` (e.g., 2.0 = +1 octave, 0.5 = -1 octave) while keeping
+ * the exact sample duration and sample count unchanged.
+ */
+function buildConstantLengthPitchBuffer(sourceBuffer, startRatio, endRatio, pitchRatio) {
+  initAudio();
+  const sampleRate = sourceBuffer.sampleRate;
+  const fullData = sourceBuffer.getChannelData(0);
+  const slicedData = extractChoppedFloatSlice(fullData, sampleRate, startRatio, endRatio);
+  const outLen = slicedData.length;
+
+  const outBuffer = audioCtx.createBuffer(1, outLen, sampleRate);
+  const outData = outBuffer.getChannelData(0);
+
+  // If pitchRatio is virtually 1.0 (unison), return the clean chopped slice directly
+  if (Math.abs(pitchRatio - 1.0) < 0.005 || outLen < 512) {
+    outData.set(slicedData);
+    return outBuffer;
+  }
+
+  // Overlap-Add Granular Synthesis (48 ms Hann-windowed grains, 75% overlap)
+  const grainSize = Math.min(outLen, Math.max(512, Math.round(sampleRate * 0.048)));
+  const hopOut = Math.max(64, Math.floor(grainSize / 4));
+
+  // Precompute Hann window for smooth crossfading between grains
+  const hann = new Float32Array(grainSize);
+  for (let i = 0; i < grainSize; i++) {
+    hann[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (grainSize - 1)));
+  }
+
+  const weightSum = new Float32Array(outLen);
+
+  for (let outPos = 0; outPos < outLen; outPos += hopOut) {
+    const grainStartIn = outPos;
+    for (let i = 0; i < grainSize; i++) {
+      const targetIdx = outPos + i;
+      if (targetIdx >= outLen) break;
+
+      // Read inside the grain at `pitchRatio` speed while advancing grain position at 1.0x speed
+      const readFloatIdx = grainStartIn + i * pitchRatio;
+      const idx0 = Math.floor(readFloatIdx);
+      let sampleVal = 0;
+
+      if (idx0 >= 0 && idx0 < outLen - 1) {
+        const frac = readFloatIdx - idx0;
+        sampleVal = slicedData[idx0] * (1 - frac) + slicedData[idx0 + 1] * frac;
+      } else if (idx0 >= 0 && idx0 < outLen) {
+        sampleVal = slicedData[idx0];
+      }
+
+      const w = hann[i];
+      outData[targetIdx] += sampleVal * w;
+      weightSum[targetIdx] += w;
+    }
+  }
+
+  // Normalize amplitude by Hann window overlap sum so volume stays steady
+  for (let i = 0; i < outLen; i++) {
+    if (weightSum[i] > 0.0001) {
+      outData[i] = Math.max(-1, Math.min(1, outData[i] / weightSum[i]));
+    }
+  }
+
+  return outBuffer;
+}
+
+function getProcessedSampleBuffer(sampleObj, sourceBuffer, useChopMarkers, pitchRatio) {
+  const startR = useChopMarkers ? chopStartRatio : 0.0;
+  const endR = useChopMarkers ? chopEndRatio : 1.0;
+  const quantizedPitch = Number(pitchRatio.toFixed(4));
+  const cacheKey = `${sampleObj.id}|${startR.toFixed(3)}|${endR.toFixed(3)}|${quantizedPitch}`;
+
+  if (pitchShiftedBufferCache[cacheKey]) {
+    return pitchShiftedBufferCache[cacheKey];
+  }
+
+  const processed = buildConstantLengthPitchBuffer(sourceBuffer, startR, endR, quantizedPitch);
+  pitchShiftedBufferCache[cacheKey] = processed;
+  return processed;
+}
+
+function resetChopMarkers(redraw = true) {
+  chopStartRatio = 0.0;
+  chopEndRatio = 1.0;
+  if (chopStartSlider) chopStartSlider.value = "0";
+  if (chopEndSlider) chopEndSlider.value = "100";
+  if (chopStartVal) chopStartVal.textContent = "0";
+  if (chopEndVal) chopEndVal.textContent = "100";
+  if (redraw) {
+    updateSampleChopperUI();
+    recalculateStaticWaveform("synth");
+  }
+}
+
+function updateSampleChopperUI() {
+  const activeSample = getActiveChopperSample();
+  const hasSample = Boolean(activeSample);
+
+  if (chopStartSlider) chopStartSlider.disabled = !hasSample;
+  if (chopEndSlider) chopEndSlider.disabled = !hasSample;
+  if (resetChopBtn) resetChopBtn.disabled = !hasSample || (chopStartRatio <= 0.001 && chopEndRatio >= 0.999);
+  if (applyChopBtn) applyChopBtn.disabled = !hasSample || (chopStartRatio <= 0.001 && chopEndRatio >= 0.999);
+
+  if (!hasSample) {
+    if (chopRangeReadout) chopRangeReadout.textContent = "0.00s – 0.00s (0.00s)";
+    drawSampleChopperCanvas(null);
+    return;
+  }
+
+  const startSec = activeSample.duration * chopStartRatio;
+  const endSec = activeSample.duration * chopEndRatio;
+  const sliceSec = Math.max(0.01, endSec - startSec);
+
+  if (chopStartVal) chopStartVal.textContent = String(Math.round(chopStartRatio * 100));
+  if (chopEndVal) chopEndVal.textContent = String(Math.round(chopEndRatio * 100));
+  if (chopRangeReadout) {
+    chopRangeReadout.textContent = `${startSec.toFixed(2)}s – ${endSec.toFixed(2)}s (${sliceSec.toFixed(2)}s)`;
+  }
+
+  drawSampleChopperCanvas(activeSample);
+}
+
+function drawSampleChopperCanvas(sampleObj) {
+  if (!sampleChopCtx || !sampleChopCanvas) return;
+  const w = sampleChopCanvas.width;
+  const h = sampleChopCanvas.height;
+  const halfH = h * 0.5;
+
+  sampleChopCtx.fillStyle = "#06110e";
+  sampleChopCtx.fillRect(0, 0, w, h);
+
+  // Center baseline
+  sampleChopCtx.strokeStyle = "rgba(45, 212, 191, 0.16)";
+  sampleChopCtx.lineWidth = 1;
+  sampleChopCtx.beginPath();
+  sampleChopCtx.moveTo(0, halfH);
+  sampleChopCtx.lineTo(w, halfH);
+  sampleChopCtx.stroke();
+
+  if (!sampleObj || !sampleObj.peaks || sampleObj.peaks.length === 0) {
+    sampleChopCtx.font = "11px monospace";
+    sampleChopCtx.fillStyle = "rgba(148, 163, 184, 0.65)";
+    sampleChopCtx.textAlign = "center";
+    sampleChopCtx.fillText("Record or select a sample to chop its start & end points", w * 0.5, halfH + 4);
+    sampleChopCtx.textAlign = "left";
+    return;
+  }
+
+  const startX = chopStartRatio * w;
+  const endX = chopEndRatio * w;
+
+  // Highlight selected active chop region
+  sampleChopCtx.fillStyle = "rgba(45, 212, 191, 0.12)";
+  sampleChopCtx.fillRect(startX, 0, Math.max(2, endX - startX), h);
+
+  // Draw waveform peaks (bright teal inside slice, dimmed outside slice)
+  const peaks = sampleObj.peaks;
+  for (let i = 0; i < peaks.length; i++) {
+    const ratio = i / Math.max(1, peaks.length - 1);
+    const x = ratio * w;
+    const amp = Math.abs(peaks[i]) * (halfH - 5);
+    const insideSlice = ratio >= chopStartRatio && ratio <= chopEndRatio;
+
+    sampleChopCtx.strokeStyle = insideSlice ? "#2dd4bf" : "rgba(100, 116, 139, 0.35)";
+    sampleChopCtx.lineWidth = 2;
+    sampleChopCtx.beginPath();
+    sampleChopCtx.moveTo(x, halfH - Math.max(1, amp));
+    sampleChopCtx.lineTo(x, halfH + Math.max(1, amp));
+    sampleChopCtx.stroke();
+  }
+
+  // Dimmed mask outside selected slice
+  sampleChopCtx.fillStyle = "rgba(6, 10, 14, 0.52)";
+  if (startX > 0) sampleChopCtx.fillRect(0, 0, startX, h);
+  if (endX < w) sampleChopCtx.fillRect(endX, 0, w - endX, h);
+
+  // Start Handle Line & Flag
+  sampleChopCtx.strokeStyle = "#f59e0b";
+  sampleChopCtx.lineWidth = 2;
+  sampleChopCtx.beginPath();
+  sampleChopCtx.moveTo(startX, 0);
+  sampleChopCtx.lineTo(startX, h);
+  sampleChopCtx.stroke();
+
+  sampleChopCtx.fillStyle = "#f59e0b";
+  sampleChopCtx.fillRect(startX, 0, 14, 12);
+  sampleChopCtx.fillStyle = "#140d04";
+  sampleChopCtx.font = "bold 9px monospace";
+  sampleChopCtx.fillText("S", startX + 4, 9);
+
+  // End Handle Line & Flag
+  sampleChopCtx.strokeStyle = "#ea580c";
+  sampleChopCtx.lineWidth = 2;
+  sampleChopCtx.beginPath();
+  sampleChopCtx.moveTo(endX, 0);
+  sampleChopCtx.lineTo(endX, h);
+  sampleChopCtx.stroke();
+
+  sampleChopCtx.fillStyle = "#ea580c";
+  sampleChopCtx.fillRect(Math.max(0, endX - 14), h - 12, 14, 12);
+  sampleChopCtx.fillStyle = "#fffbeb";
+  sampleChopCtx.fillText("E", Math.max(4, endX - 10), h - 3);
+}
+
+async function applyPermanentChopToActiveSample() {
+  const activeSample = getActiveChopperSample();
+  if (!activeSample) return;
+  if (chopStartRatio <= 0.001 && chopEndRatio >= 0.999) return;
+
+  initAudio();
+
+  if (activeSample.id === "unsaved" && pendingRecording) {
+    const slicedFloat = extractChoppedFloatSlice(
+      pendingRecording.floatData,
+      pendingRecording.sampleRate,
+      chopStartRatio,
+      chopEndRatio
+    );
+    const newBuffer = audioCtx.createBuffer(1, slicedFloat.length, pendingRecording.sampleRate);
+    newBuffer.getChannelData(0).set(slicedFloat);
+
+    pendingRecording = {
+      floatData: slicedFloat,
+      sampleRate: pendingRecording.sampleRate,
+      duration: slicedFloat.length / pendingRecording.sampleRate,
+      peaks: computeNormalizedPeaks(slicedFloat, 180),
+      tempBuffer: newBuffer
+    };
+
+    clearPitchCacheForSample("unsaved");
+    resetChopMarkers(false);
+    syncSampleDropdowns();
+    if (waveSelect) waveSelect.value = "sample:unsaved";
+    updateSampleChopperUI();
+    recalculateStaticWaveform("synth");
+
+    if (recStatusText) {
+      recStatusText.textContent = `Chopped take to ${pendingRecording.duration.toFixed(2)}s! Save or play now.`;
+    }
+    playSynthNote(parseFloat(noteSelect.value) || 220);
+    return;
+  }
+
+  // Permanent chop on a saved library sample
+  const savedItem = savedSamples.find((s) => s.id === activeSample.id);
+  if (!savedItem) return;
+
+  const sourceBuf = await decodeSampleToAudioBuffer(savedItem);
+  if (!sourceBuf) return;
+
+  const fullFloat = sourceBuf.getChannelData(0);
+  const slicedFloat = extractChoppedFloatSlice(fullFloat, sourceBuf.sampleRate, chopStartRatio, chopEndRatio);
+  const compactFloat = downsampleMonoFloat32(slicedFloat, sourceBuf.sampleRate, SAMPLE_EXPORT_RATE);
+
+  savedItem.wavDataUrl = encodeMonoWavDataUrl(compactFloat, SAMPLE_EXPORT_RATE);
+  savedItem.duration = Number((slicedFloat.length / sourceBuf.sampleRate).toFixed(2));
+  savedItem.peaks = computeNormalizedPeaks(slicedFloat, 180);
+
+  delete decodedSampleBuffers[savedItem.id];
+  clearPitchCacheForSample(savedItem.id);
+
+  if (!persistSavedSamplesToStorage()) return;
+  await decodeSampleToAudioBuffer(savedItem);
+
+  resetChopMarkers(false);
+  syncSampleDropdowns();
+  if (sampleLibrarySelect) sampleLibrarySelect.value = savedItem.id;
+  if (waveSelect) waveSelect.value = `sample:${savedItem.id}`;
+  updateSampleChopperUI();
+  recalculateStaticWaveform("synth");
+
+  WAVECRAFT_DATA.tracks.forEach((t) => {
+    if (drumSettings[t.id] && drumSettings[t.id].presetKey === `sample:${savedItem.id}`) {
+      recalculateStaticWaveform(t.id);
+    }
+  });
+
+  if (recStatusText) {
+    recStatusText.textContent = `Applied chop to "${savedItem.name}" (${savedItem.duration.toFixed(2)}s).`;
+  }
+  playSynthNote(parseFloat(noteSelect.value) || 220);
+}
+
+// ============================================================================
+// SAMPLE LIBRARY DROPDOWNS, RECORDING & SAVING
+// ============================================================================
+
 function syncSampleDropdowns() {
-  // 1. Update Top Saved Library Dropdown
   if (sampleLibrarySelect) {
     const prevLibVal = sampleLibrarySelect.value;
     sampleLibrarySelect.innerHTML = "";
@@ -360,7 +714,7 @@ function syncSampleDropdowns() {
       savedSamples.forEach((s) => {
         const opt = document.createElement("option");
         opt.value = s.id;
-        opt.textContent = `${s.name} (${s.duration.toFixed(1)}s)`;
+        opt.textContent = `${s.name} (${s.duration.toFixed(2)}s)`;
         sampleLibrarySelect.appendChild(opt);
       });
     }
@@ -377,7 +731,6 @@ function syncSampleDropdowns() {
     deleteSampleBtn.disabled = !sampleLibrarySelect.value;
   }
 
-  // 2. Update Wave Synthesizer "OSCILLATOR / SAMPLE" Dropdown
   if (waveSelect) {
     const prevWaveVal = waveSelect.value;
     waveSelect.innerHTML = `
@@ -396,14 +749,14 @@ function syncSampleDropdowns() {
       if (pendingRecording) {
         const unsavedOpt = document.createElement("option");
         unsavedOpt.value = "sample:unsaved";
-        unsavedOpt.textContent = `● Unsaved Take (${pendingRecording.duration.toFixed(1)}s)`;
+        unsavedOpt.textContent = `● Unsaved Take (${pendingRecording.duration.toFixed(2)}s)`;
         sampleGroup.appendChild(unsavedOpt);
       }
 
       savedSamples.forEach((s) => {
         const opt = document.createElement("option");
         opt.value = `sample:${s.id}`;
-        opt.textContent = `🎤 ${s.name} (${s.duration.toFixed(1)}s)`;
+        opt.textContent = `🎤 ${s.name} (${s.duration.toFixed(2)}s)`;
         sampleGroup.appendChild(opt);
       });
 
@@ -414,7 +767,6 @@ function syncSampleDropdowns() {
     waveSelect.value = stillExists ? prevWaveVal : "sawtooth";
   }
 
-  // 3. Refresh Drum Sequencer Track Dropdowns so saved samples appear on every drum voice
   if (sequencerGrid && Object.keys(gridState).length > 0) {
     renderGrid();
   }
@@ -529,10 +881,13 @@ async function startMicRecording() {
       tempBuffer: tempBuffer
     };
 
+    clearPitchCacheForSample("unsaved");
+    resetChopMarkers(false);
     syncSampleDropdowns();
     if (waveSelect) {
       waveSelect.value = "sample:unsaved";
     }
+    updateSampleChopperUI();
     recalculateStaticWaveform("synth");
 
     if (previewRecBtn) previewRecBtn.disabled = false;
@@ -541,14 +896,14 @@ async function startMicRecording() {
       sampleNameInput.value = `Sample ${savedSamples.length + 1}`;
     }
     if (recStatusText) {
-      recStatusText.textContent = `Captured ${pendingRecording.duration.toFixed(1)}s! Loaded into Synth — turn knobs or Save.`;
+      recStatusText.textContent = `Captured ${pendingRecording.duration.toFixed(1)}s! Chop Start/End or Save.`;
     }
 
     updateSoundDesignGuide({
-      title: "Mic Sampler • Recording Loaded into Synth",
-      what: "Your live microphone recording is now loaded as the active sound source for the Wave Synthesizer.",
-      listen: "Press TRIG SYNTH NOTE (or keys A–K) and twist Cutoff, Drive, Pitch, or Echo to transform your voice!",
-      watch: "Watch your captured audio waveform reshape live on the OSC Waveform screen as you turn the knobs."
+      title: "Mic Sampler • Chop & Pitch-Shift Ready",
+      what: "Your live recording is loaded into the Sample Chopper and Wave Synthesizer.",
+      listen: "Drag the Start/End handles to isolate a slice, then play keys A–K or turn Pitch—the pitch shifts without changing audio length!",
+      watch: "Watch the highlighted region on the Sample Chopper screen and the reshaped wave on OSC Waveform."
     });
 
     playSynthNote(parseFloat(noteSelect.value) || 220);
@@ -587,8 +942,16 @@ async function saveCurrentRecordingToLibrary() {
   const rawName = sampleNameInput ? sampleNameInput.value.trim() : "";
   const cleanName = (rawName || `Sample ${savedSamples.length + 1}`).slice(0, 24);
 
-  const compactFloat = downsampleMonoFloat32(
+  // Save only the user's selected Start/End slice
+  const slicedFloat = extractChoppedFloatSlice(
     pendingRecording.floatData,
+    pendingRecording.sampleRate,
+    chopStartRatio,
+    chopEndRatio
+  );
+
+  const compactFloat = downsampleMonoFloat32(
+    slicedFloat,
     pendingRecording.sampleRate,
     SAMPLE_EXPORT_RATE
   );
@@ -597,9 +960,9 @@ async function saveCurrentRecordingToLibrary() {
   const newEntry = {
     id: `smp_${Date.now()}`,
     name: cleanName,
-    duration: Number(pendingRecording.duration.toFixed(2)),
+    duration: Number((slicedFloat.length / pendingRecording.sampleRate).toFixed(2)),
     wavDataUrl: wavDataUrl,
-    peaks: pendingRecording.peaks
+    peaks: computeNormalizedPeaks(slicedFloat, 180)
   };
 
   savedSamples.unshift(newEntry);
@@ -610,6 +973,8 @@ async function saveCurrentRecordingToLibrary() {
 
   await decodeSampleToAudioBuffer(newEntry);
   pendingRecording = null;
+  clearPitchCacheForSample("unsaved");
+  resetChopMarkers(false);
 
   syncSampleDropdowns();
   if (sampleLibrarySelect) sampleLibrarySelect.value = newEntry.id;
@@ -619,9 +984,10 @@ async function saveCurrentRecordingToLibrary() {
   if (previewRecBtn) previewRecBtn.disabled = false;
   if (sampleNameInput) sampleNameInput.value = "";
   if (recStatusText) {
-    recStatusText.textContent = `Saved "${newEntry.name}"! Available in Synth & all Drum Tracks.`;
+    recStatusText.textContent = `Saved "${newEntry.name}" (${newEntry.duration.toFixed(2)}s) to library!`;
   }
 
+  updateSampleChopperUI();
   recalculateStaticWaveform("synth");
 }
 
@@ -634,9 +1000,9 @@ function deleteSelectedLibrarySample() {
   const removedName = savedSamples[idx].name;
   savedSamples.splice(idx, 1);
   delete decodedSampleBuffers[targetId];
+  clearPitchCacheForSample(targetId);
   persistSavedSamplesToStorage();
 
-  // Reset any drum track that was using the deleted sample back to Preset A
   WAVECRAFT_DATA.tracks.forEach((track) => {
     if (drumSettings[track.id] && drumSettings[track.id].presetKey === `sample:${targetId}`) {
       const currentVol = drumSettings[track.id].volume;
@@ -649,7 +1015,9 @@ function deleteSelectedLibrarySample() {
     }
   });
 
+  resetChopMarkers(false);
   syncSampleDropdowns();
+  updateSampleChopperUI();
   recalculateStaticWaveform("synth");
   renderDrumEditor();
 
@@ -810,7 +1178,6 @@ function initAudio() {
 
     updateMasterFxParams();
 
-    // Pre-decode any saved samples from localStorage so they trigger with zero latency
     savedSamples.forEach((s) => {
       decodeSampleToAudioBuffer(s);
     });
@@ -1146,6 +1513,9 @@ function recalculateStaticWaveform(channelId) {
     const waveType = waveSelect ? waveSelect.value : "sawtooth";
     const isSample = waveType.startsWith("sample:");
     const sampleObj = isSample ? getSampleById(waveType) : null;
+    const slicedPeaks = isSample && sampleObj
+      ? getChoppedPeaksSlice(sampleObj.peaks, chopStartRatio, chopEndRatio)
+      : null;
 
     const {
       pitch,
@@ -1170,9 +1540,12 @@ function recalculateStaticWaveform(channelId) {
     const dynBypass = rackState.bypass.dynamics;
     const spaceBypass = rackState.bypass.space;
 
-    const baseDur = isSample && sampleObj ? Math.max(0.25, sampleObj.duration) : 0.65;
-    const holdTime = isSample && sampleObj ? Math.max(0.1, sampleObj.duration - (attack + decay)) : 0.25;
-    const totalDur = adsrBypass ? baseDur : Math.max(0.25, attack + decay + holdTime + release);
+    const slicedDuration = isSample && sampleObj
+      ? Math.max(0.05, sampleObj.duration * (chopEndRatio - chopStartRatio))
+      : 0.65;
+    const baseDur = isSample && sampleObj ? Math.max(0.15, slicedDuration) : 0.65;
+    const holdTime = isSample && sampleObj ? Math.max(0.08, slicedDuration - (attack + decay)) : 0.25;
+    const totalDur = adsrBypass ? baseDur : Math.max(0.15, attack + decay + holdTime + release);
 
     const pitchMult = tuningBypass ? 1.0 : Math.pow(2, pitch / 12);
     const baseCycles = Math.max(4, Math.min(38, 14 * Math.pow(pitchMult, 0.55)));
@@ -1210,11 +1583,11 @@ function recalculateStaticWaveform(channelId) {
         : Math.max(60, Math.min(8500, cutoff + (modDepth / 100) * cutoff * 0.75 * lfoWave));
 
       let rawSample = 0;
-      if (isSample && sampleObj && sampleObj.peaks) {
-        const speedNorm = Math.min(2.0, Math.max(0.5, pitchMult));
-        rawSample = samplePeakArray(sampleObj.peaks, Math.min(1, tNorm * speedNorm));
+      if (isSample && slicedPeaks && slicedPeaks.length > 0) {
+        // Constant-length pitch-shifting keeps the waveform envelope span locked at 1.0x length
+        rawSample = samplePeakArray(slicedPeaks, tNorm);
         if (hasDetuneTwin) {
-          const twinSample = samplePeakArray(sampleObj.peaks, Math.min(1, tNorm * speedNorm * 0.985 + 0.015));
+          const twinSample = samplePeakArray(slicedPeaks, Math.min(1, tNorm * 0.992 + 0.008));
           rawSample = (rawSample + twinSample) * 0.65;
         }
       } else {
@@ -1389,7 +1762,7 @@ function drawChannelCanvas(vis, nowTime) {
 }
 
 // ============================================================================
-// DRUM & SYNTH AUDIO ENGINES (SYNTHETIC + RECORDED MIC SAMPLES)
+// DRUM & SYNTH AUDIO ENGINES (SYNTHETIC + CHOPPED & PITCH-LOCKED SAMPLES)
 // ============================================================================
 
 function initDrumSettings() {
@@ -1506,21 +1879,20 @@ async function playSynthNote(baseFreq = 220) {
   const detuneCents = rackState.bypass.tuning ? 0 : rackState.params.detune;
   const shiftedFreq = baseFreq * Math.pow(2, pitchSemis / 12);
 
-  // Branch A: Recorded Mic Sample played through the 6-module Synth Rack
+  // Branch A: Recorded Mic Sample played with Sample Chopper + Constant-Length Pitch Shifting
   if (selectedSource.startsWith("sample:")) {
     const sampleObj = getSampleById(selectedSource);
     if (!sampleObj) return;
-    const buffer = sampleObj.audioBuffer || (await decodeSampleToAudioBuffer(sampleObj));
-    if (!buffer) return;
+    const rawBuffer = sampleObj.audioBuffer || (await decodeSampleToAudioBuffer(sampleObj));
+    if (!rawBuffer) return;
 
-    // A3 (220 Hz) plays at 1.0x natural pitch; keys A-K and Pitch knob transpose musically
-    const playbackRate = Math.max(0.25, Math.min(4.0, shiftedFreq / 220));
-    const naturalDur = buffer.duration / playbackRate;
+    // A3 (220 Hz) plays at 1.0x pitch; keys A-K and Pitch knob shift pitch WITHOUT altering duration
+    const pitchRatio = Math.max(0.25, Math.min(4.0, shiftedFreq / 220));
+    const pitchedChopBuffer = getProcessedSampleBuffer(sampleObj, rawBuffer, true, pitchRatio);
+    const fixedDur = pitchedChopBuffer.duration;
 
     const srcPrimary = audioCtx.createBufferSource();
-    srcPrimary.buffer = buffer;
-    srcPrimary.playbackRate.setValueAtTime(playbackRate, now);
-    srcPrimary.detune.setValueAtTime(-detuneCents * 0.5, now);
+    srcPrimary.buffer = pitchedChopBuffer;
 
     const sourceMixer = audioCtx.createGain();
     sourceMixer.gain.value = 1.0;
@@ -1528,10 +1900,10 @@ async function playSynthNote(baseFreq = 220) {
 
     let srcTwin = null;
     if (!rackState.bypass.tuning && Math.abs(detuneCents) > 0.5) {
+      const twinRatio = pitchRatio * Math.pow(2, detuneCents / 1200);
+      const twinBuffer = getProcessedSampleBuffer(sampleObj, rawBuffer, true, twinRatio);
       srcTwin = audioCtx.createBufferSource();
-      srcTwin.buffer = buffer;
-      srcTwin.playbackRate.setValueAtTime(playbackRate, now);
-      srcTwin.detune.setValueAtTime(detuneCents * 0.5, now);
+      srcTwin.buffer = twinBuffer;
 
       const twinGain = audioCtx.createGain();
       twinGain.gain.value = 0.72;
@@ -1541,16 +1913,16 @@ async function playSynthNote(baseFreq = 220) {
     }
 
     const envGain = audioCtx.createGain();
-    let totalNoteDuration = naturalDur;
+    let totalNoteDuration = fixedDur;
 
     if (rackState.bypass.adsr) {
       envGain.gain.setValueAtTime(0.0001, now);
       envGain.gain.linearRampToValueAtTime(0.85, now + 0.008);
-      envGain.gain.setValueAtTime(0.85, now + Math.max(0.01, naturalDur - 0.02));
-      envGain.gain.linearRampToValueAtTime(0.0001, now + naturalDur);
+      envGain.gain.setValueAtTime(0.85, now + Math.max(0.01, fixedDur - 0.02));
+      envGain.gain.linearRampToValueAtTime(0.0001, now + fixedDur);
     } else {
       const { attack, decay, sustain, release } = rackState.params;
-      const holdTime = Math.max(0.12, naturalDur - (attack + decay));
+      const holdTime = Math.max(0.08, fixedDur - (attack + decay));
       const peakGain = 0.9;
       const sustainGain = Math.max(0.001, peakGain * sustain);
       totalNoteDuration = attack + decay + holdTime + release;
@@ -2116,7 +2488,6 @@ function renderGrid() {
       presetDropdown.appendChild(opt);
     });
 
-    // Append saved mic samples so any drum track can play & sculpt custom recordings
     if (savedSamples.length > 0) {
       const sepOpt = document.createElement("option");
       sepOpt.disabled = true;
@@ -2483,7 +2854,7 @@ function setupTooltips() {
   });
 }
 
-function setupSamplerControls() {
+function setupSamplerAndChopperControls() {
   if (recMicBtn) {
     recMicBtn.addEventListener("click", startMicRecording);
   }
@@ -2496,6 +2867,7 @@ function setupSamplerControls() {
         } else if (sampleLibrarySelect && sampleLibrarySelect.value) {
           waveSelect.value = `sample:${sampleLibrarySelect.value}`;
         }
+        updateSampleChopperUI();
         recalculateStaticWaveform("synth");
       }
       playSynthNote(parseFloat(noteSelect.value) || 220);
@@ -2514,10 +2886,12 @@ function setupSamplerControls() {
       if (chosenId) {
         if (waveSelect) waveSelect.value = `sample:${chosenId}`;
         if (previewRecBtn) previewRecBtn.disabled = false;
+        resetChopMarkers(false);
+        updateSampleChopperUI();
         recalculateStaticWaveform("synth");
         const sampleObj = getSampleById(chosenId);
         if (sampleObj && recStatusText) {
-          recStatusText.textContent = `Loaded "${sampleObj.name}" (${sampleObj.duration}s) into Synth.`;
+          recStatusText.textContent = `Loaded "${sampleObj.name}" (${sampleObj.duration}s) into Chopper & Synth.`;
         }
         playSynthNote(parseFloat(noteSelect.value) || 220);
       }
@@ -2526,6 +2900,91 @@ function setupSamplerControls() {
 
   if (deleteSampleBtn) {
     deleteSampleBtn.addEventListener("click", deleteSelectedLibrarySample);
+  }
+
+  // Sample Chopper Sliders
+  if (chopStartSlider) {
+    chopStartSlider.addEventListener("input", () => {
+      const rawStart = Number(chopStartSlider.value) / 100;
+      chopStartRatio = Math.min(chopEndRatio - 0.03, Math.max(0, rawStart));
+      chopStartSlider.value = String(Math.round(chopStartRatio * 100));
+      updateSampleChopperUI();
+      recalculateStaticWaveform("synth");
+    });
+  }
+
+  if (chopEndSlider) {
+    chopEndSlider.addEventListener("input", () => {
+      const rawEnd = Number(chopEndSlider.value) / 100;
+      chopEndRatio = Math.max(chopStartRatio + 0.03, Math.min(1, rawEnd));
+      chopEndSlider.value = String(Math.round(chopEndRatio * 100));
+      updateSampleChopperUI();
+      recalculateStaticWaveform("synth");
+    });
+  }
+
+  if (resetChopBtn) {
+    resetChopBtn.addEventListener("click", () => {
+      resetChopMarkers(true);
+    });
+  }
+
+  if (applyChopBtn) {
+    applyChopBtn.addEventListener("click", applyPermanentChopToActiveSample);
+  }
+
+  // Direct Mouse & Touch Drag-Selection on Sample Chopper Waveform Canvas
+  if (sampleChopCanvas) {
+    function pointerRatioFromEvent(e) {
+      const rect = sampleChopCanvas.getBoundingClientRect();
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      return Math.max(0, Math.min(1, (clientX - rect.left) / Math.max(1, rect.width)));
+    }
+
+    function onChopPointerMove(e) {
+      if (!isDraggingChopCanvas) return;
+      const curRatio = pointerRatioFromEvent(e);
+      const minR = Math.min(chopDragAnchorRatio, curRatio);
+      const maxR = Math.max(chopDragAnchorRatio, curRatio);
+
+      if (maxR - minR >= 0.03) {
+        chopStartRatio = minR;
+        chopEndRatio = maxR;
+        if (chopStartSlider) chopStartSlider.value = String(Math.round(chopStartRatio * 100));
+        if (chopEndSlider) chopEndSlider.value = String(Math.round(chopEndRatio * 100));
+        updateSampleChopperUI();
+        recalculateStaticWaveform("synth");
+      }
+    }
+
+    function onChopPointerUp() {
+      if (!isDraggingChopCanvas) return;
+      isDraggingChopCanvas = false;
+      window.removeEventListener("mousemove", onChopPointerMove);
+      window.removeEventListener("mouseup", onChopPointerUp);
+      window.removeEventListener("touchmove", onChopPointerMove);
+      window.removeEventListener("touchend", onChopPointerUp);
+      if (getActiveChopperSample()) {
+        playSynthNote(parseFloat(noteSelect.value) || 220);
+      }
+    }
+
+    sampleChopCanvas.addEventListener("mousedown", (e) => {
+      if (!getActiveChopperSample()) return;
+      e.preventDefault();
+      isDraggingChopCanvas = true;
+      chopDragAnchorRatio = pointerRatioFromEvent(e);
+      window.addEventListener("mousemove", onChopPointerMove);
+      window.addEventListener("mouseup", onChopPointerUp);
+    });
+
+    sampleChopCanvas.addEventListener("touchstart", (e) => {
+      if (!getActiveChopperSample()) return;
+      isDraggingChopCanvas = true;
+      chopDragAnchorRatio = pointerRatioFromEvent(e);
+      window.addEventListener("touchmove", onChopPointerMove);
+      window.addEventListener("touchend", onChopPointerUp);
+    }, { passive: true });
   }
 }
 
@@ -2565,16 +3024,18 @@ function startApp() {
   });
 
   waveSelect.addEventListener("change", () => {
+    resetChopMarkers(false);
+    updateSampleChopperUI();
     recalculateStaticWaveform("synth");
     const waveName = waveSelect.options[waveSelect.selectedIndex].text;
     const isSample = waveSelect.value.startsWith("sample:");
     updateSoundDesignGuide({
       title: isSample ? `Mic Sample • ${waveName}` : `Oscillator Waveform • ${waveName}`,
       what: isSample
-        ? "Uses your recorded microphone sample as the sound source, pitched across keys A–K and routed through all 6 rack modules."
+        ? "Uses your chopped microphone sample as the sound source, with constant-length pitch shifting across keys A–K."
         : "Chooses the foundational geometric shape of the vibrating sound wave before filtering or effects.",
       listen: isSample
-        ? "Play keys A–K to pitch-shift your sample, or turn Cutoff, Drive, ADSR, and Echo to reshape it."
+        ? "Play keys A–K or turn Pitch to raise/lower pitch without speeding up or slowing down the recording."
         : "Sine is pure and subby; Triangle is warm; Sawtooth is rich and buzzy; Square is hollow and retro.",
       watch: "Watch the waveform on the OSC Waveform screen reshape immediately as you turn any rack knob."
     });
@@ -2607,13 +3068,14 @@ function startApp() {
     renderGrid();
   });
 
-  setupSamplerControls();
+  setupSamplerAndChopperControls();
   setupTooltips();
   setupModularRackControls();
   setupKeyboardShortcuts();
   renderModularRack();
   renderDrumEditor();
   loadDefaultPreset("basicRock");
+  updateSampleChopperUI();
 
   if (!animLoopStarted) {
     animLoopStarted = true;
