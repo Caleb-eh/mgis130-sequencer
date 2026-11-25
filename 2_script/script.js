@@ -116,6 +116,12 @@ const SECTION_LETTERS = ["A", "B", "C", "D", "E", "F", "G", "H"];
 let sections = []; // Array of { id, name, stepCount, grid }
 let activeSectionIndex = 0;
 let chainSectionsEnabled = false;
+
+// Modular Rack State
+const rackState = {
+  filterType: "lowpass",
+  delaySync: "1/8",
+  bypass: {
     tuning: false,
     adsr: false,
     filter: false,
@@ -171,6 +177,12 @@ const sectionTabsContainer = document.getElementById("section-tabs");
 const addSectionBtn = document.getElementById("add-section-btn");
 const copySectionBtn = document.getElementById("copy-section-btn");
 const chainSectionsBtn = document.getElementById("chain-sections-btn");
+
+// Mic Sampler & Library DOM References
+const recLengthSelect = document.getElementById("rec-length-select");
+const recMicBtn = document.getElementById("rec-mic-btn");
+const previewRecBtn = document.getElementById("preview-rec-btn");
+const recStatusText = document.getElementById("rec-status-text");
 const sampleNameInput = document.getElementById("sample-name-input");
 const saveSampleBtn = document.getElementById("save-sample-btn");
 const saveSampleFxBtn = document.getElementById("save-sample-fx-btn");
@@ -3324,7 +3336,15 @@ function updatePlayheadColumnHighlight(newStep) {
 // 60FPS ANIMATION LOOP & LOOKAHEAD SCHEDULER
 // ============================================================================
 
-      if (isPlaying) {
+function animationFrameLoop() {
+  requestAnimationFrame(animationFrameLoop);
+
+  let now = null;
+  if (audioCtx) {
+    now = audioCtx.currentTime;
+    updateRealtimeNoiseGate();
+
+    if (isPlaying) {
       while (visualStepQueue.length && visualStepQueue[0].time <= now) {
         const currentEvent = visualStepQueue.shift();
         if (
@@ -3853,18 +3873,6 @@ function startApp() {
     if (sections[activeSectionIndex]) {
       sections[activeSectionIndex].grid = gridState;
     }
-    renderGrid();
-  });
-
-  swingSlider.addEventListener("input", () => {
-    swingPercent = Number(swingSlider.value);
-    swingVal.textContent = swingPercent;
-  });
-
-  clearBtn.addEventListener("click", () => {
-    WAVECRAFT_DATA.tracks.forEach((t) => {
-      gridState[t.id] = Array(32).fill(0);
-    });
     renderGrid();
   });
 
