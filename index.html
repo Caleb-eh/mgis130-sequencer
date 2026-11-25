@@ -8,7 +8,7 @@
 </head>
 <body>
   <div class="chassis-wrapper">
-    <!-- Sticky Top Bar + Floating Learn Mode Dropdown Drawer -->
+    <!-- Top Header Bar -->
     <header class="top-bar-sticky-wrap">
       <div class="top-bar hardware-panel">
         <span class="screw tl" aria-hidden="true"></span>
@@ -40,12 +40,11 @@
             type="button"
             id="learn-toggle-btn"
             class="btn btn-learn-toggle active"
-            aria-expanded="true"
-            aria-controls="learn-drawer"
+            aria-pressed="true"
+            title="Toggle floating cursor sound-design tooltips on or off"
           >
             <span class="learn-status-dot" aria-hidden="true"></span>
             <span id="learn-toggle-text">LEARN MODE: ON</span>
-            <span class="learn-chevron" aria-hidden="true">▾</span>
           </button>
 
           <div class="hardware-status-strip" aria-hidden="true">
@@ -60,33 +59,6 @@
           </div>
         </div>
       </div>
-
-      <!-- Floating Dropdown Drawer: stays pinned at top on scroll and overlays workspace when open -->
-      <section id="learn-drawer" class="learn-drawer hardware-panel" aria-live="polite">
-        <div class="learn-guide-header">
-          <div class="learn-guide-title-wrap">
-            <span class="badge">LEARN MODE • SOUND DESIGN GUIDE</span>
-            <strong id="learn-title">Hover or turn any knob to inspect the sound wave</strong>
-          </div>
-          <button type="button" id="learn-close-btn" class="btn btn-ghost btn-sm" title="Hide Learn Mode drawer">
-            HIDE ▴
-          </button>
-        </div>
-        <div class="learn-guide-grid">
-          <div class="learn-card">
-            <span class="learn-card-tag">1. WHAT IT IS</span>
-            <p id="learn-what">Every control shapes either the pitch, volume envelope, frequency balance, or room space of your sound.</p>
-          </div>
-          <div class="learn-card">
-            <span class="learn-card-tag">2. WHAT TO LISTEN FOR</span>
-            <p id="learn-listen">Listen for changes in brightness, punch, grit, or echo tails as you audition notes and drum loops.</p>
-          </div>
-          <div class="learn-card">
-            <span class="learn-card-tag">3. WHAT TO WATCH ON THE WAVE</span>
-            <p id="learn-watch">Watch the static waveform preview and live EQ frequency curve reshape immediately as you turn knobs.</p>
-          </div>
-        </div>
-      </section>
     </header>
 
     <main class="workspace">
@@ -384,6 +356,28 @@
       </section>
     </main>
   </div>
+
+  <!-- Floating Cursor Sound Design Tooltip (follows mouse when Learn Mode is ON) -->
+  <aside id="learn-drawer" class="learn-cursor-tooltip is-hidden" role="tooltip" aria-live="polite">
+    <div class="learn-guide-header">
+      <span class="badge">LEARN MODE</span>
+      <strong id="learn-title">Sound Design Guide</strong>
+    </div>
+    <div class="learn-tooltip-body">
+      <div class="learn-tooltip-row">
+        <span class="learn-card-tag">WHAT IT IS</span>
+        <p id="learn-what">Every control shapes the pitch, volume envelope, frequency balance, or room space of your sound.</p>
+      </div>
+      <div class="learn-tooltip-row">
+        <span class="learn-card-tag">LISTEN FOR</span>
+        <p id="learn-listen">Listen for changes in brightness, punch, grit, or echo tails.</p>
+      </div>
+      <div class="learn-tooltip-row">
+        <span class="learn-card-tag">WATCH WAVE</span>
+        <p id="learn-watch">Watch the waveform preview and live EQ curve update live.</p>
+      </div>
+    </div>
+  </aside>
 
   <!-- Load data first, then main logic -->
   <script src="1_data/data.js"></script>

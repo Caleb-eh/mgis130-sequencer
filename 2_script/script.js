@@ -2,14 +2,15 @@
 // PROCESSING & PRESENTATION: Lookahead scheduler, dry metronome, Pitch/Detune twin oscillator,
 // Mic Sampler, Interactive Sample Chopper, Constant-Length Granular Pitch-Shifter,
 // Saved Sound Design Presets on Samples (excluding Space), Global + Per-Track Drum Space,
-// 3-Band EQ BiquadFilterNode chain, and static wave previews.
+// 3-Band EQ BiquadFilterNode chain, floating cursor Learn Mode, and static wave previews.
 
 let audioCtx = null;
 let noiseBuffer = null;
 let reverbImpulseBuffer = null;
 let isPlaying = false;
 let metronomeEnabled = false;
-let learnModeOpen = true;
+let learnModeEnabled = true;
+let isHoveringLearnTarget = false;
 
 // Lookahead Web Audio Scheduler state
 let currentScheduleStep = 0;
@@ -187,28 +188,53 @@ const chopEndVal = document.getElementById("chop-end-val");
 const resetChopBtn = document.getElementById("reset-chop-btn");
 const applyChopBtn = document.getElementById("apply-chop-btn");
 
-// Interactive Sound Design Guide & Dropdown Drawer DOM elements
+// Floating Cursor Sound Design Tooltip DOM elements
 const learnToggleBtn = document.getElementById("learn-toggle-btn");
 const learnToggleText = document.getElementById("learn-toggle-text");
-const learnCloseBtn = document.getElementById("learn-close-btn");
 const learnDrawer = document.getElementById("learn-drawer");
 const learnTitle = document.getElementById("learn-title");
 const learnWhat = document.getElementById("learn-what");
 const learnListen = document.getElementById("learn-listen");
 const learnWatch = document.getElementById("learn-watch");
 
-function setLearnModeOpen(open) {
-  learnModeOpen = Boolean(open);
-  if (learnDrawer) {
-    learnDrawer.classList.toggle("is-collapsed", !learnModeOpen);
+function refreshLearnTooltipVisibility() {
+  if (!learnDrawer) return;
+  const shouldShow = learnModeEnabled && isHoveringLearnTarget;
+  learnDrawer.classList.toggle("is-hidden", !shouldShow);
+}
+
+function positionLearnTooltipNearCursor(clientX, clientY) {
+  if (!learnDrawer || !learnModeEnabled) return;
+  const offset = 18;
+  const rect = learnDrawer.getBoundingClientRect();
+  const tipWidth = rect.width || 310;
+  const tipHeight = rect.height || 175;
+
+  let left = clientX + offset;
+  let top = clientY + offset;
+
+  // Flip left if too close to right edge of viewport
+  if (left + tipWidth > window.innerWidth - 12) {
+    left = Math.max(12, clientX - tipWidth - offset);
   }
+  // Flip upward if too close to bottom edge of viewport
+  if (top + tipHeight > window.innerHeight - 12) {
+    top = Math.max(12, clientY - tipHeight - offset);
+  }
+
+  learnDrawer.style.transform = `translate3d(${Math.round(left)}px, ${Math.round(top)}px, 0)`;
+}
+
+function setLearnModeEnabled(enabled) {
+  learnModeEnabled = Boolean(enabled);
   if (learnToggleBtn) {
-    learnToggleBtn.classList.toggle("active", learnModeOpen);
-    learnToggleBtn.setAttribute("aria-expanded", String(learnModeOpen));
+    learnToggleBtn.classList.toggle("active", learnModeEnabled);
+    learnToggleBtn.setAttribute("aria-pressed", String(learnModeEnabled));
   }
   if (learnToggleText) {
-    learnToggleText.textContent = learnModeOpen ? "LEARN MODE: ON" : "LEARN MODE: OFF";
+    learnToggleText.textContent = learnModeEnabled ? "LEARN MODE: ON" : "LEARN MODE: OFF";
   }
+  refreshLearnTooltipVisibility();
 }
 
 function updateSoundDesignGuide({ title, what, listen, watch }) {
@@ -216,6 +242,21 @@ function updateSoundDesignGuide({ title, what, listen, watch }) {
   if (learnWhat && what) learnWhat.textContent = what;
   if (learnListen && listen) learnListen.textContent = listen;
   if (learnWatch && watch) watch.textContent = watch;
+}
+
+function attachLearnHoverHandlers(element, getGuidePayload) {
+  if (!element) return;
+  element.addEventListener("mouseenter", (e) => {
+    const payload = typeof getGuidePayload === "function" ? getGuidePayload() : getGuidePayload;
+    if (payload) updateSoundDesignGuide(payload);
+    isHoveringLearnTarget = true;
+    refreshLearnTooltipVisibility();
+    positionLearnTooltipNearCursor(e.clientX, e.clientY);
+  });
+  element.addEventListener("mouseleave", () => {
+    isHoveringLearnTarget = false;
+    refreshLearnTooltipVisibility();
+  });
 }
 
 // ============================================================================
@@ -1263,7 +1304,7 @@ function initAudio() {
     reverbConvolver.buffer = reverbImpulseBuffer;
     reverbWetGain = audioCtx.createGain();
 
-    // 2. DEDICATED DRUM SEQUENCER SPACE BUS (Global + Per-Track Echo & Reverb)
+    // 2. DEDICATED DRUM SEQUENCER SPACE & TIME BUS (Global + Per-Track Echo & Reverb)
     drumDelayInputBus = audioCtx.createGain();
     drumDelayNode = audioCtx.createDelay(1.0);
     drumDelayNode.delayTime.value = getSyncedDelayTimeSeconds();
@@ -2410,20 +2451,20 @@ function createKnob({ label, min, max, step, value, defaultValue, unit, guideDat
   const wrapper = document.createElement("div");
   wrapper.className = "knob-unit";
 
-  function showGuide() {
-    if (guideData) {
-      updateSoundDesignGuide(guideData);
-    } else if (tip) {
-      updateSoundDesignGuide({
+  function buildGuidePayload() {
+    if (guideData) return guideData;
+    if (tip) {
+      return {
         title: label || "Parameter Control",
         what: tip,
         listen: "Listen for tonal balance, punch, or volume shifts as you adjust this control.",
         watch: "Watch the waveform preview and Live EQ curve update live."
-      });
+      };
     }
+    return null;
   }
 
-  wrapper.addEventListener("mouseenter", showGuide);
+  attachLearnHoverHandlers(wrapper, buildGuidePayload);
 
   const labelEl = document.createElement("span");
   labelEl.className = "knob-label";
@@ -2476,7 +2517,8 @@ function createKnob({ label, min, max, step, value, defaultValue, unit, guideDat
     const stepped = Math.round(clamped / step) * step;
     currentVal = Number(stepped.toFixed(4));
     updateVisual(currentVal);
-    showGuide();
+    const payload = buildGuidePayload();
+    if (payload) updateSoundDesignGuide(payload);
     onChange(currentVal);
   }
 
@@ -2503,7 +2545,8 @@ function createKnob({ label, min, max, step, value, defaultValue, unit, guideDat
     e.preventDefault();
     startY = e.clientY;
     startVal = currentVal;
-    showGuide();
+    const payload = buildGuidePayload();
+    if (payload) updateSoundDesignGuide(payload);
     window.addEventListener("mousemove", onPointerMove);
     window.addEventListener("mouseup", onPointerUp);
   });
@@ -2511,7 +2554,8 @@ function createKnob({ label, min, max, step, value, defaultValue, unit, guideDat
   dial.addEventListener("touchstart", (e) => {
     startY = e.touches[0].clientY;
     startVal = currentVal;
-    showGuide();
+    const payload = buildGuidePayload();
+    if (payload) updateSoundDesignGuide(payload);
     window.addEventListener("touchmove", onPointerMove);
     window.addEventListener("touchend", onPointerUp);
   }, { passive: true });
@@ -2875,14 +2919,12 @@ function renderGrid() {
     selectBtn.className = "track-select-btn";
     selectBtn.style.borderLeft = `4px solid ${track.color}`;
     selectBtn.textContent = track.name;
-    selectBtn.addEventListener("mouseenter", () => {
-      updateSoundDesignGuide({
-        title: `Voice Select • ${track.name}`,
-        what: `Selects ${track.name} in the Voice Shaping strip above so you can sculpt its EQ, Attack, Echo, and Reverb.`,
-        listen: `Click ${track.name} and press 'AUDITION VOICE' (or key '${Object.keys(DRUM_KEY_MAP).find((k) => DRUM_KEY_MAP[k] === track.id)}') to hear it.`,
-        watch: `Watch the ${track.name} static waveform preview reshape as you turn its editor knobs.`
-      });
-    });
+    attachLearnHoverHandlers(selectBtn, () => ({
+      title: `Voice Select • ${track.name}`,
+      what: `Selects ${track.name} in the Voice Shaping strip above so you can sculpt its EQ, Attack, Echo, and Reverb.`,
+      listen: `Click ${track.name} and press 'AUDITION VOICE' (or key '${Object.keys(DRUM_KEY_MAP).find((k) => DRUM_KEY_MAP[k] === track.id)}') to hear it.`,
+      watch: `Watch the ${track.name} static waveform preview reshape as you turn its editor knobs.`
+    }));
     selectBtn.addEventListener("click", () => {
       selectedTrackId = track.id;
       document.querySelectorAll(".track-row").forEach((r) => {
@@ -3287,15 +3329,24 @@ function setupKeyboardShortcuts() {
 }
 
 function setupTooltips() {
+  window.addEventListener("mousemove", (e) => {
+    if (learnModeEnabled && isHoveringLearnTarget) {
+      positionLearnTooltipNearCursor(e.clientX, e.clientY);
+    }
+  });
+
+  document.addEventListener("mouseleave", () => {
+    isHoveringLearnTarget = false;
+    refreshLearnTooltipVisibility();
+  });
+
   document.querySelectorAll("[data-tip]").forEach((el) => {
-    el.addEventListener("mouseenter", () => {
-      updateSoundDesignGuide({
-        title: "Hardware Control Overview",
-        what: el.dataset.tip,
-        listen: "Press START / STOP or trigger a synth/drum voice to hear how this control shapes the audio.",
-        watch: "Watch the dual phosphor screens respond immediately."
-      });
-    });
+    attachLearnHoverHandlers(el, () => ({
+      title: "Hardware Control Overview",
+      what: el.dataset.tip,
+      listen: "Press START / STOP or trigger a synth/drum voice to hear how this control shapes the audio.",
+      watch: "Watch the dual phosphor screens respond immediately."
+    }));
   });
 }
 
@@ -3459,12 +3510,7 @@ function startApp() {
 
   if (learnToggleBtn) {
     learnToggleBtn.addEventListener("click", () => {
-      setLearnModeOpen(!learnModeOpen);
-    });
-  }
-  if (learnCloseBtn) {
-    learnCloseBtn.addEventListener("click", () => {
-      setLearnModeOpen(false);
+      setLearnModeEnabled(!learnModeEnabled);
     });
   }
 
