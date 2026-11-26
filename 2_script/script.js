@@ -460,7 +460,7 @@ async function decodeSampleToAudioBuffer(sampleObj) {
   if (decodedSampleBuffers[sampleObj.id]) {
     return decodedSampleBuffers[sampleObj.id];
   }
-  initAudio();
+  await ensureAudioReady();
   try {
     const arrayBuf = dataUrlToArrayBuffer(sampleObj.wavDataUrl);
     const audioBuf = await audioCtx.decodeAudioData(arrayBuf);
@@ -760,7 +760,7 @@ async function applyPermanentChopToActiveSample() {
   if (!activeSample) return;
   if (chopStartRatio <= 0.001 && chopEndRatio >= 0.999) return;
 
-  initAudio();
+  await ensureAudioReady();
 
   if (activeSample.id === "unsaved" && pendingRecording) {
     const slicedFloat = extractChoppedFloatSlice(
@@ -925,7 +925,7 @@ async function startMicRecording() {
     return;
   }
 
-  initAudio();
+  await ensureAudioReady();
   const durationSec = Math.max(1, Math.min(5, Number(recLengthSelect ? recLengthSelect.value : 2) || 2));
 
   try {
@@ -960,8 +960,9 @@ async function startMicRecording() {
   activeMicSource = audioCtx.createMediaStreamSource(activeMicStream);
   activeMicProcessor = audioCtx.createScriptProcessor(4096, 1, 1);
 
+  // Keep a sub-audible (non-zero) gain path to destination so browsers never suspend or zero out the processor
   const silentSink = audioCtx.createGain();
-  silentSink.gain.value = 0;
+  silentSink.gain.value = 0.00001;
 
   function finishRecording() {
     if (!isRecordingMic) return;
@@ -1003,12 +1004,28 @@ async function startMicRecording() {
       writePos += copyLen;
     }
 
-    let peak = 0.01;
+    // Remove any DC offset before normalizing so quiet mic signals aren't skewed
+    let mean = 0;
     for (let i = 0; i < merged.length; i++) {
+      mean += merged[i];
+    }
+    mean /= merged.length;
+
+    let peak = 0.001;
+    for (let i = 0; i < merged.length; i++) {
+      merged[i] -= mean;
       const a = Math.abs(merged[i]);
       if (a > peak) peak = a;
     }
-    const normGain = Math.min(6.0, 0.92 / peak);
+
+    if (peak < 0.002) {
+      if (recStatusText) {
+        recStatusText.textContent = "Mic signal was completely silent. Check OS input level.";
+      }
+      return;
+    }
+
+    const normGain = Math.min(18.0, 0.92 / peak);
     for (let i = 0; i < merged.length; i++) {
       merged[i] = Math.max(-1, Math.min(1, merged[i] * normGain));
     }
@@ -1052,7 +1069,7 @@ async function startMicRecording() {
       watch: "Watch the highlighted region on the Sample Chopper screen and the reshaped wave on OSC Waveform."
     });
 
-    triggerOneShotSynthNote(parseFloat(noteSelect.value) || 220);
+    triggerOneShotSynthNote(parseFloat(noteSelect.value) || 220, Math.min(1200, Math.round(pendingRecording.duration * 1000)));
   }
 
   activeMicProcessor.onaudioprocess = (e) => {
@@ -1459,12 +1476,23 @@ function initAudio() {
   }
 }
 
+async function ensureAudioReady() {
+  initAudio();
+  if (audioCtx && audioCtx.state === "suspended") {
+    try {
+      await audioCtx.resume();
+    } catch (_) {
+      // Ignore browser autoplay restrictions until user gesture
+    }
+  }
+}
+
 function updateRealtimeNoiseGate() {
   if (!audioCtx || !gateAnalyserNode || !gateGainNode) return;
   const now = audioCtx.currentTime;
 
-  if (rackState.bypass.dynamics) {
-    gateGainNode.gain.setTargetAtTime(1.0, now, 0.015);
+  if (rackState.bypass.dynamics || activePolyVoices.size > 0) {
+    gateGainNode.gain.setTargetAtTime(1.0, now, 0.008);
     return;
   }
 
@@ -2142,7 +2170,7 @@ function chokeActiveOpenHat(atTime) {
 }
 
 async function playDrumSound(trackId, when = null, ignoreMuteSolo = false, stepVelocity = 0.85) {
-  initAudio();
+  await ensureAudioReady();
   if (!ignoreMuteSolo && !isTrackAudible(trackId)) return;
 
   const s = drumSettings[trackId];
@@ -2575,7 +2603,7 @@ async function playDrumSound(trackId, when = null, ignoreMuteSolo = false, stepV
 // ============================================================================
 
 async function startSustainedSynthNote(noteId, baseFreq = 220, velocity = 0.88) {
-  initAudio();
+  await ensureAudioReady();
 
   if (activePolyVoices.has(noteId)) {
     releaseSustainedSynthNote(noteId);
@@ -2590,6 +2618,12 @@ async function startSustainedSynthNote(noteId, baseFreq = 220, velocity = 0.88) 
 
   const polyHeadroom = 0.78;
   const vel = Math.max(0.2, Math.min(1.0, velocity));
+
+  // Ensure Noise Gate opens immediately when a note starts
+  if (gateGainNode) {
+    gateGainNode.gain.cancelScheduledValues(now);
+    gateGainNode.gain.setValueAtTime(1.0, now);
+  }
 
   // Branch A: Recorded Mic Sample played polyphonically with Sample Chopper + Granular Pitch-Shift
   if (selectedSource.startsWith("sample:")) {
@@ -2632,17 +2666,19 @@ async function startSustainedSynthNote(noteId, baseFreq = 220, velocity = 0.88) 
     }
 
     const envGain = audioCtx.createGain();
-    const { attack, decay, sustain, release } = rackState.params;
-    const peakGain = 0.88 * polyHeadroom * vel;
-    const sustainGain = Math.max(0.001, peakGain * (rackState.bypass.adsr ? 0.9 : sustain));
+    const safeAttack = Math.max(0.005, rackState.params.attack || 0.01);
+    const safeDecay = Math.max(0.02, rackState.params.decay || 0.15);
+    const { sustain, release } = rackState.params;
+    const peakGain = 0.95 * polyHeadroom * vel;
+    const sustainGain = Math.max(0.001, peakGain * (rackState.bypass.adsr ? 0.95 : Math.max(0.05, sustain)));
 
     if (rackState.bypass.adsr) {
       envGain.gain.setValueAtTime(0.0001, now);
       envGain.gain.linearRampToValueAtTime(peakGain, now + 0.008);
     } else {
       envGain.gain.setValueAtTime(0.0001, now);
-      envGain.gain.linearRampToValueAtTime(peakGain, now + attack);
-      envGain.gain.exponentialRampToValueAtTime(sustainGain, now + attack + decay);
+      envGain.gain.linearRampToValueAtTime(peakGain, now + safeAttack);
+      envGain.gain.exponentialRampToValueAtTime(sustainGain, now + safeAttack + safeDecay);
     }
 
     triggerWaveformPlayhead("synth", now, Math.max(0.25, fixedDur));
@@ -2652,13 +2688,13 @@ async function startSustainedSynthNote(noteId, baseFreq = 220, velocity = 0.88) 
     if (!rackState.bypass.filter) {
       const filter = audioCtx.createBiquadFilter();
       filter.type = rackState.filterType;
-      const baseCut = rackState.params.cutoff;
+      const baseCut = Math.max(80, rackState.params.cutoff);
       const envCutPeak = rackState.filterType === "lowpass"
         ? Math.min(12000, baseCut * (1 + 0.35 * vel))
         : baseCut;
 
       filter.frequency.setValueAtTime(envCutPeak, now);
-      filter.frequency.exponentialRampToValueAtTime(Math.max(60, baseCut), now + Math.max(0.08, decay));
+      filter.frequency.exponentialRampToValueAtTime(baseCut, now + Math.max(0.08, safeDecay));
       filter.Q.setValueAtTime(rackState.params.resonance, now);
 
       const modAmt = rackState.params.modDepth;
@@ -2741,20 +2777,22 @@ async function startSustainedSynthNote(noteId, baseFreq = 220, velocity = 0.88) 
   }
 
   const envGain = audioCtx.createGain();
-  const { attack, decay, sustain, release } = rackState.params;
+  const safeAttack = Math.max(0.005, rackState.params.attack || 0.01);
+  const safeDecay = Math.max(0.02, rackState.params.decay || 0.15);
+  const { sustain, release } = rackState.params;
   const peakGain = 0.42 * polyHeadroom * vel;
-  const sustainGain = Math.max(0.001, peakGain * (rackState.bypass.adsr ? 0.85 : sustain));
+  const sustainGain = Math.max(0.001, peakGain * (rackState.bypass.adsr ? 0.85 : Math.max(0.05, sustain)));
 
   if (rackState.bypass.adsr) {
     envGain.gain.setValueAtTime(0.0001, now);
     envGain.gain.linearRampToValueAtTime(peakGain * 0.85, now + 0.008);
   } else {
     envGain.gain.setValueAtTime(0.0001, now);
-    envGain.gain.linearRampToValueAtTime(peakGain, now + attack);
-    envGain.gain.exponentialRampToValueAtTime(sustainGain, now + attack + decay);
+    envGain.gain.linearRampToValueAtTime(peakGain, now + safeAttack);
+    envGain.gain.exponentialRampToValueAtTime(sustainGain, now + safeAttack + safeDecay);
   }
 
-  triggerWaveformPlayhead("synth", now, Math.max(0.45, attack + decay + 0.25));
+  triggerWaveformPlayhead("synth", now, Math.max(0.45, safeAttack + safeDecay + 0.25));
 
   let lastNode = oscMixer;
   let lfoOsc = null;
@@ -2762,13 +2800,13 @@ async function startSustainedSynthNote(noteId, baseFreq = 220, velocity = 0.88) 
   if (!rackState.bypass.filter) {
     const filter = audioCtx.createBiquadFilter();
     filter.type = rackState.filterType;
-    const baseCut = rackState.params.cutoff;
+    const baseCut = Math.max(80, rackState.params.cutoff);
     const envCutPeak = rackState.filterType === "lowpass"
       ? Math.min(12000, baseCut * (1 + 0.38 * vel))
       : baseCut;
 
     filter.frequency.setValueAtTime(envCutPeak, now);
-    filter.frequency.exponentialRampToValueAtTime(Math.max(60, baseCut), now + Math.max(0.08, decay));
+    filter.frequency.exponentialRampToValueAtTime(baseCut, now + Math.max(0.08, safeDecay));
     filter.Q.setValueAtTime(rackState.params.resonance, now);
 
     const modAmt = rackState.params.modDepth;
@@ -3829,8 +3867,8 @@ function runLookaheadScheduler() {
   schedulerTimerId = setTimeout(runLookaheadScheduler, lookaheadMs);
 }
 
-function togglePlay() {
-  initAudio();
+async function togglePlay() {
+  await ensureAudioReady();
   isPlaying = !isPlaying;
 
   if (isPlaying) {
@@ -3852,8 +3890,8 @@ function togglePlay() {
   updateCalAnimationState();
 }
 
-function toggleMetronome() {
-  initAudio();
+async function toggleMetronome() {
+  await ensureAudioReady();
   metronomeEnabled = !metronomeEnabled;
   metroBtn.classList.toggle("active", metronomeEnabled);
   metroBtn.setAttribute("aria-pressed", String(metronomeEnabled));
@@ -4126,7 +4164,9 @@ function setupMicSamplerEvents() {
         updateSampleChopperUI();
         recalculateStaticWaveform("synth");
       }
-      triggerOneShotSynthNote(freq, 420);
+      const activeSample = getActiveChopperSample();
+      const holdMs = activeSample ? Math.max(350, Math.min(2500, Math.round(activeSample.duration * 1000))) : 420;
+      triggerOneShotSynthNote(freq, holdMs);
     });
   }
 
@@ -4173,7 +4213,8 @@ function setupMicSamplerEvents() {
             : `Loaded clean sample "${sampleObj.name}" (default settings).`;
         }
 
-        triggerOneShotSynthNote(parseFloat(noteSelect.value) || 220, 400);
+        const holdMs = Math.max(350, Math.min(2500, Math.round(sampleObj.duration * 1000)));
+        triggerOneShotSynthNote(parseFloat(noteSelect.value) || 220, holdMs);
       }
     });
   }
